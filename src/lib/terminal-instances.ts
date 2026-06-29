@@ -102,6 +102,7 @@ const terminalFontFamilyMap: Record<TerminalFont, string> = {
     '"Source Code Pro", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace',
   'sf-mono': '"SF Mono", Menlo, Monaco, Consolas, monospace',
   system: 'ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace',
+  custom: 'ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace', // fallback, overridden by getTerminalFontFamily
 }
 
 function getConfiguredRenderer(): TerminalRenderer {
@@ -125,6 +126,9 @@ function getTerminalFontFamily(): string {
     preferencesQueryKeys.preferences()
   )
   const font = preferences?.terminal_font ?? defaultPreferences.terminal_font
+  if (font === 'custom' && preferences?.custom_terminal_font) {
+    return `"${preferences.custom_terminal_font}", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace`
+  }
   return (
     terminalFontFamilyMap[
       font ?? defaultPreferences.terminal_font ?? 'system'

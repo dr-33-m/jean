@@ -795,27 +795,10 @@ export function useMainWindowEventListeners() {
 
         listen('menu-check-updates', async () => {
           logger.debug('Check for updates menu event received')
-          if (!isNativeApp()) return
-          try {
-            const { check } = await import('@tauri-apps/plugin-updater')
-            const update = await check()
-            if (update) {
-              // Pass update object to App.tsx for installation handling
-              window.dispatchEvent(
-                new CustomEvent('update-available', { detail: update })
-              )
-              // Show the update modal (same as auto-check on startup)
-              useUIStore.getState().setUpdateModalVersion(update.version)
-            } else {
-              commandContext.showToast(
-                'You are running the latest version',
-                'success'
-              )
-            }
-          } catch (error) {
-            logger.error('Update check failed:', { error: String(error) })
-            commandContext.showToast('Failed to check for updates', 'error')
-          }
+          commandContext.showToast(
+            'Updates disabled — manage manually via git',
+            'info'
+          )
         }),
 
         listen('menu-preferences', () => {

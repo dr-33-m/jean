@@ -124,7 +124,7 @@ export function OpenInModal() {
     const allOptions: ModalOption[] = [
       {
         id: 'editor',
-        label: getEditorLabel(preferences?.editor),
+        label: getEditorLabel(preferences?.editor, preferences?.custom_editor_command),
         icon: Code,
         key: 'E',
       },
@@ -329,6 +329,7 @@ export function OpenInModal() {
           openInEditor.mutate({
             worktreePath: targetPath,
             editor: preferences?.editor,
+            customEditorCommand: preferences?.custom_editor_command,
           })
           break
         case 'terminal':

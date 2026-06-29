@@ -76,8 +76,9 @@ export function useWorktreeMenuActions({
     openInEditor.mutate({
       worktreePath: worktree.path,
       editor: preferences?.editor,
+      customEditorCommand: preferences?.custom_editor_command,
     })
-  }, [openInEditor, worktree.path, preferences?.editor])
+  }, [openInEditor, worktree.path, preferences?.editor, preferences?.custom_editor_command])
 
   const handleArchiveOrClose = useCallback(() => {
     if (isBase) {

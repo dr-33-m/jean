@@ -2069,16 +2069,23 @@ export function useOpenWorktreeInEditor() {
     mutationFn: async ({
       worktreePath,
       editor,
+      customEditorCommand,
     }: {
       worktreePath: string
       editor?: string
+      customEditorCommand?: string
     }): Promise<void> => {
       if (!isTauri()) {
         throw new Error('Not in Tauri context')
       }
 
-      logger.debug('Opening worktree in Editor', { worktreePath, editor })
-      await invoke('open_worktree_in_editor', { worktreePath, editor })
+      // Resolve 'custom' editor to the actual CLI command
+      const resolvedEditor =
+        editor === 'custom' && customEditorCommand
+          ? customEditorCommand
+          : editor
+      logger.debug('Opening worktree in Editor', { worktreePath, editor: resolvedEditor })
+      await invoke('open_worktree_in_editor', { worktreePath, editor: resolvedEditor })
       logger.info('Opened worktree in Editor')
     },
     onError: error => {

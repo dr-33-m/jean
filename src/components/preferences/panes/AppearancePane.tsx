@@ -28,6 +28,8 @@ import {
   type SyntaxTheme,
   type FileEditMode,
   type TerminalBackgroundMode,
+  terminalFontOptions,
+  type TerminalFont,
 } from '@/types/preferences'
 import { isMacOS } from '@/lib/platform'
 import { invoke } from '@/lib/transport'
@@ -112,7 +114,10 @@ export const AppearancePane: React.FC = () => {
   )
 
   const handleFontChange = useCallback(
-    (field: 'ui_font' | 'chat_font', value: UIFont | ChatFont) => {
+    (
+      field: 'ui_font' | 'chat_font' | 'terminal_font',
+      value: UIFont | ChatFont | TerminalFont
+    ) => {
       patchPreferences.mutate({ [field]: value })
     },
     [patchPreferences]
@@ -435,6 +440,48 @@ export const AppearancePane: React.FC = () => {
               </SelectContent>
             </Select>
           </InlineField>
+
+          <InlineField
+            label="Terminal font"
+            description="Font for terminal sessions"
+          >
+            <Select
+              value={preferences?.terminal_font ?? 'jetbrains-mono'}
+              onValueChange={value =>
+                handleFontChange('terminal_font', value as TerminalFont)
+              }
+              disabled={patchPreferences.isPending}
+            >
+              <SelectTrigger className="w-full sm:w-80">
+                <SelectValue placeholder="Select font" />
+              </SelectTrigger>
+              <SelectContent>
+                {terminalFontOptions.map(option => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </InlineField>
+
+          {preferences?.terminal_font === 'custom' && (
+            <InlineField
+              label="Custom terminal font"
+              description="Font family name (e.g. MesloLGS NF, Hack Nerd Font)"
+            >
+              <Input
+                className="w-full sm:w-80"
+                placeholder="e.g. MesloLGS NF"
+                value={preferences?.custom_terminal_font ?? ''}
+                onChange={e =>
+                  patchPreferences.mutate({
+                    custom_terminal_font: e.target.value || undefined,
+                  })
+                }
+              />
+            </InlineField>
+          )}
         </div>
       </SettingsSection>
 

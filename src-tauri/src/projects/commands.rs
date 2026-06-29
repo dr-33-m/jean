@@ -4255,18 +4255,12 @@ pub async fn open_worktree_in_editor(
                 }
                 Err(e) => Err(e),
             },
-            _ => match std::process::Command::new("code")
-                .arg(&worktree_path)
-                .spawn()
-            {
-                Ok(child) => Ok(child),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    std::process::Command::new("open")
-                        .args(["-a", "Visual Studio Code", &worktree_path])
-                        .spawn()
-                }
-                Err(e) => Err(e),
-            },
+            _ => {
+                // Custom or unknown editor: run as raw CLI command
+                std::process::Command::new(&editor_app)
+                    .arg(&worktree_path)
+                    .spawn()
+            }
         };
 
         match result {
@@ -4303,9 +4297,9 @@ pub async fn open_worktree_in_editor(
                 return Err("Xcode is only available on macOS".to_string());
             }
             _ => {
-                // Default to VS Code
+                // Custom or unknown editor: run as raw CLI command via cmd
                 std::process::Command::new("cmd")
-                    .args(["/c", "code", &worktree_path])
+                    .args(["/c", &editor_app, &worktree_path])
                     .creation_flags(CREATE_NO_WINDOW)
                     .spawn()
             }
@@ -4337,8 +4331,8 @@ pub async fn open_worktree_in_editor(
                 return Err("Xcode is only available on macOS".to_string());
             }
             _ => {
-                // Default to VS Code
-                std::process::Command::new("code")
+                // Custom or unknown editor: run as raw CLI command
+                std::process::Command::new(&editor_app)
                     .arg(&worktree_path)
                     .spawn()
             }

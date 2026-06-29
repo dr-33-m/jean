@@ -1,4 +1,5 @@
 #![allow(
+    unknown_lints,
     dead_code,
     clippy::cmp_owned,
     clippy::derivable_impls,
@@ -19,6 +20,7 @@
     clippy::single_match,
     clippy::too_many_arguments,
     clippy::type_complexity,
+    clippy::uninlined_format_args,
     clippy::unnecessary_cast,
     clippy::unnecessary_map_or,
     clippy::while_let_on_iterator
@@ -148,11 +150,15 @@ pub struct AppPreferences {
     #[serde(default = "default_terminal_renderer")]
     pub terminal_renderer: String, // Embedded terminal renderer: "xterm" or "ghostty-web" (experimental)
     #[serde(default = "default_terminal_font")]
-    pub terminal_font: String, // Embedded terminal font: jetbrains-mono, fira-code, source-code-pro, sf-mono, system
+    pub terminal_font: String, // Embedded terminal font: jetbrains-mono, fira-code, source-code-pro, sf-mono, system, custom
+    #[serde(default)]
+    pub custom_terminal_font: Option<String>, // Custom terminal font family (used when terminal_font == "custom")
     #[serde(default = "default_terminal_font_size")]
     pub terminal_font_size: u32, // Embedded terminal font size in pixels (10-24)
     #[serde(default = "default_editor")]
-    pub editor: String, // Editor app: zed, vscode, cursor, xcode, intellij
+    pub editor: String, // Editor app: zed, vscode, cursor, xcode, intellij, custom
+    #[serde(default)]
+    pub custom_editor_command: Option<String>, // Custom editor CLI command (used when editor == "custom")
     #[serde(default = "default_open_in")]
     pub open_in: String, // Default Open In action: editor, terminal, finder, github
     #[serde(default = "default_auto_branch_naming")]
@@ -856,9 +862,12 @@ mod tests {
 
         let bind_host = resolve_headless_bind_host(&prefs, &overrides.host);
         let token_required = resolve_headless_token_required(&prefs, &overrides);
-        let err =
-            validate_headless_security(&bind_host, !token_required, overrides.allow_unsafe_no_token)
-                .unwrap_err();
+        let err = validate_headless_security(
+            &bind_host,
+            !token_required,
+            overrides.allow_unsafe_no_token,
+        )
+        .unwrap_err();
 
         assert!(err.contains("Refusing to disable token authentication"));
     }
@@ -2012,8 +2021,10 @@ impl Default for AppPreferences {
             terminal: default_terminal(),
             terminal_renderer: default_terminal_renderer(),
             terminal_font: default_terminal_font(),
+            custom_terminal_font: None,
             terminal_font_size: default_terminal_font_size(),
             editor: default_editor(),
+            custom_editor_command: None,
             open_in: default_open_in(),
             auto_branch_naming: default_auto_branch_naming(),
             branch_naming_model: default_branch_naming_model(),
@@ -3082,11 +3093,7 @@ async fn start_http_server_headless(
 
     let token_required = resolve_headless_token_required(&prefs, overrides);
 
-    validate_headless_security(
-        &bind_host,
-        !token_required,
-        overrides.allow_unsafe_no_token,
-    )?;
+    validate_headless_security(&bind_host, !token_required, overrides.allow_unsafe_no_token)?;
 
     // Token: CLI --token used directly (not persisted), otherwise load/generate
     let token = if let Some(ref t) = overrides.token {

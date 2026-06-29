@@ -88,7 +88,7 @@
   },
   "plugins": {
     "updater": {
-      "active": true,
+      "active": false,
       "endpoints": [
         "https://github.com/coollabsio/jean/releases/latest/download/latest.json"
       ],

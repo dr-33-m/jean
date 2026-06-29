@@ -3013,11 +3013,12 @@ export function ProjectCanvasView({ projectId }: ProjectCanvasViewProps) {
                         openInEditor.mutate({
                           worktreePath: project.path,
                           editor: preferences?.editor,
+                          customEditorCommand: preferences?.custom_editor_command,
                         })
                       }
                     >
                       <Code className="h-4 w-4" />
-                      Open in {getEditorLabel(preferences?.editor)}
+                      Open in {getEditorLabel(preferences?.editor, preferences?.custom_editor_command)}
                     </DropdownMenuItem>
 
                     {isNative && (

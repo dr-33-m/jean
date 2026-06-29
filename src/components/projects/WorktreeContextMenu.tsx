@@ -93,7 +93,7 @@ export function WorktreeContextMenu({
         {isNativeApp() && (
           <ContextMenuItem onClick={handleOpenInEditor}>
             <Code className="mr-2 h-4 w-4" />
-            Open in {getEditorLabel(preferences?.editor)}
+            Open in {getEditorLabel(preferences?.editor, preferences?.custom_editor_command)}
           </ContextMenuItem>
         )}
 

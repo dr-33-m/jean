@@ -1108,6 +1108,12 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
     }
   }
 
+  const handleCustomEditorCommandChange = (value: string) => {
+    if (preferences) {
+      patchPreferences.mutate({ custom_editor_command: value || undefined })
+    }
+  }
+
   const handleOpenInChange = (value: OpenInDefault) => {
     if (preferences) {
       patchPreferences.mutate({ open_in: value })
@@ -3945,6 +3951,22 @@ export const GeneralPane: React.FC<{ scope?: PreferencesPaneScope }> = ({
                     ))}
                   </SelectContent>
                 </Select>
+              </InlineField>
+            )}
+
+            {isNativeApp() && preferences?.editor === 'custom' && (
+              <InlineField
+                label="Editor command"
+                description="CLI command to open files (e.g. codium, nvim, kate)"
+              >
+                <Input
+                  className="w-full sm:w-80"
+                  placeholder="e.g. codium"
+                  value={preferences?.custom_editor_command ?? ''}
+                  onChange={e =>
+                    handleCustomEditorCommandChange(e.target.value)
+                  }
+                />
               </InlineField>
             )}
 

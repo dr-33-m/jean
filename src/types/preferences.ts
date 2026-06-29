@@ -15,6 +15,7 @@ export type TerminalFont =
   | 'source-code-pro'
   | 'sf-mono'
   | 'system'
+  | 'custom'
 
 export const notificationSoundOptions: {
   value: NotificationSound
@@ -1032,8 +1033,10 @@ export interface AppPreferences {
   terminal: TerminalApp // Terminal app: 'terminal' | 'warp' | 'ghostty' | 'iterm2' | 'powershell' | 'windows-terminal'
   terminal_renderer?: TerminalRenderer // Embedded terminal renderer: 'xterm' or 'ghostty-web' (experimental)
   terminal_font?: TerminalFont // Embedded terminal font
+  custom_terminal_font?: string // Custom terminal font family (used when terminal_font === 'custom')
   terminal_font_size?: number // Embedded terminal font size in pixels
-  editor: EditorApp // Editor app: 'zed' | 'vscode' | 'cursor' | 'xcode'
+  editor: EditorApp // Editor app: 'zed' | 'vscode' | 'cursor' | 'xcode' | 'custom'
+  custom_editor_command?: string // Custom editor CLI command (used when editor === 'custom')
   open_in: OpenInDefault // Default Open In action: 'editor' | 'terminal' | 'finder' | 'github'
   auto_branch_naming: boolean // Automatically generate branch names from first message
   branch_naming_model: ClaudeModel // Model for generating branch names
@@ -1611,7 +1614,13 @@ export function getTerminalOptions(): { value: TerminalApp; label: string }[] {
 export const terminalOptions: { value: TerminalApp; label: string }[] =
   getTerminalOptions()
 
-export type EditorApp = 'zed' | 'vscode' | 'cursor' | 'xcode' | 'intellij'
+export type EditorApp =
+  | 'zed'
+  | 'vscode'
+  | 'cursor'
+  | 'xcode'
+  | 'intellij'
+  | 'custom'
 
 const allEditorOptions: {
   value: EditorApp
@@ -1633,6 +1642,11 @@ const allEditorOptions: {
   {
     value: 'intellij',
     label: 'IntelliJ IDEA',
+    platforms: ['mac', 'windows', 'linux'],
+  },
+  {
+    value: 'custom' as EditorApp,
+    label: 'Custom',
     platforms: ['mac', 'windows', 'linux'],
   },
 ]
@@ -1770,6 +1784,7 @@ export const terminalFontOptions: { value: TerminalFont; label: string }[] = [
   { value: 'source-code-pro', label: 'Source Code Pro' },
   { value: 'sf-mono', label: 'SF Mono / Menlo' },
   { value: 'system', label: 'System Monospace' },
+  { value: 'custom', label: 'Custom' },
 ]
 
 // Git poll interval options (seconds) - for local git commands
@@ -1878,7 +1893,15 @@ export function getTerminalLabel(terminal: TerminalApp | undefined): string {
   return option?.label ?? 'Terminal'
 }
 
-export function getEditorLabel(editor: EditorApp | undefined): string {
+export function getEditorLabel(
+  editor: EditorApp | undefined,
+  customCommand?: string
+): string {
+  if (editor === 'custom' && customCommand) {
+    // Show the command name (e.g. "codium" from "/usr/bin/codium" or just "codium")
+    const name = customCommand.split('/').pop()?.split('\\').pop() ?? customCommand
+    return name.charAt(0).toUpperCase() + name.slice(1)
+  }
   // Search all options (not just platform-filtered) so saved cross-platform values resolve
   const option = allEditorOptions.find(opt => opt.value === editor)
   return option?.label ?? 'Editor'

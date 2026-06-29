@@ -149,9 +149,7 @@ function App() {
   // Linux: route OS file drops (intercepted in Rust) to a terminal or the chat.
   useLinuxFileDrop()
 
-  // Holds the update object so the title bar indicator can trigger install later
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const pendingUpdateRef = useRef<any>(null)
+
 
   useEffect(() => {
     let unlisten: (() => void) | undefined
@@ -167,73 +165,6 @@ function App() {
     })
     return () => unlisten?.()
   }, [])
-
-  const installAppUpdate = useCallback(
-    async (update: {
-      version: string
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      downloadAndInstall: (cb: (event: any) => void) => Promise<void>
-    }) => {
-      let totalBytes = 0
-      let downloadedBytes = 0
-      const toastId = toast.loading(`Downloading update ${update.version}...`)
-
-      // Clear the pending indicator since we're installing now
-      useUIStore.getState().setPendingUpdateVersion(null)
-      pendingUpdateRef.current = null
-
-      try {
-        await update.downloadAndInstall(event => {
-          switch (event.event) {
-            case 'Started':
-              totalBytes = event.data.contentLength ?? 0
-              logger.info(`Downloading ${totalBytes} bytes`)
-              break
-            case 'Progress':
-              downloadedBytes += event.data.chunkLength
-              if (totalBytes > 0) {
-                const percent = Math.round((downloadedBytes / totalBytes) * 100)
-                toast.loading(`Downloading update... ${percent}%`, {
-                  id: toastId,
-                })
-              }
-              break
-            case 'Finished':
-              logger.info('Download complete, installing...')
-              toast.loading('Installing update...', { id: toastId })
-              break
-          }
-        })
-
-        toast.success(`Update ${update.version} installed!`, {
-          id: toastId,
-          duration: Infinity,
-          action: {
-            label: 'Restart',
-            onClick: async () => {
-              const { relaunch } = await import('@tauri-apps/plugin-process')
-              await relaunch()
-            },
-          },
-        })
-      } catch (updateError) {
-        const errorStr = String(updateError)
-        logger.error(`Update installation failed: ${errorStr}`)
-        if (errorStr.includes('invalid updater binary format')) {
-          toast.error(
-            `Auto-update not supported for this installation type. Please update manually.`,
-            { id: toastId, duration: 8000 }
-          )
-        } else {
-          toast.error(`Update failed: ${errorStr}`, {
-            id: toastId,
-            duration: 8000,
-          })
-        }
-      }
-    },
-    []
-  )
 
   // Seed TanStack Query cache and Zustand state from bulk initial data.
   // Used on both initial preload and WebSocket reconnect.
@@ -1033,41 +964,6 @@ function App() {
       mode: import.meta.env.MODE,
     })
 
-    // Auto-updater logic - check for updates 5 seconds after app loads
-    const checkForUpdates = async () => {
-      if (!isNativeApp()) return
-      // Don't re-show modal if user already dismissed an update
-      if (useUIStore.getState().pendingUpdateVersion) return
-
-      try {
-        const { check } = await import('@tauri-apps/plugin-updater')
-
-        const update = await check()
-        if (update) {
-          logger.info(`Update available: ${update.version}`)
-          pendingUpdateRef.current = update
-          useUIStore.getState().setUpdateModalVersion(update.version)
-        }
-      } catch (checkError) {
-        logger.error(`Update check failed: ${String(checkError)}`)
-        // Silent fail for update checks - don't bother user with network issues
-      }
-    }
-
-    // Listen for install trigger from title bar indicator
-    const handleInstallPending = () => {
-      if (pendingUpdateRef.current) {
-        installAppUpdate(pendingUpdateRef.current)
-      }
-    }
-    window.addEventListener('install-pending-update', handleInstallPending)
-
-    // Listen for update object from manual "Check for Updates" menu
-    const handleUpdateAvailable = (e: Event) => {
-      pendingUpdateRef.current = (e as CustomEvent).detail
-    }
-    window.addEventListener('update-available', handleUpdateAvailable)
-
     interface ResumableSession {
       session_id: string
       worktree_id: string
@@ -1254,17 +1150,10 @@ function App() {
         })
     }, 2500)
 
-    // Check for updates 5 seconds after app loads, then every 30 minutes
-    const updateTimer = setTimeout(checkForUpdates, 5000)
-    const updateInterval = setInterval(checkForUpdates, 30 * 60 * 1000)
     return () => {
       cancelIdleStartupWork()
-      clearTimeout(updateTimer)
-      clearInterval(updateInterval)
-      window.removeEventListener('install-pending-update', handleInstallPending)
-      window.removeEventListener('update-available', handleUpdateAvailable)
     }
-  }, [installAppUpdate])
+  }, [])
 
   // Show loading screen while preloading initial data (web view only)
   if (isPreloading) {

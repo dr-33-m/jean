@@ -313,9 +313,13 @@ export function useCommandContext(
     }
 
     try {
+      const resolvedEditor =
+        preferences?.editor === 'custom' && preferences?.custom_editor_command
+          ? preferences.custom_editor_command
+          : preferences?.editor
       await invoke('open_worktree_in_editor', {
         worktreePath,
-        editor: preferences?.editor,
+        editor: resolvedEditor,
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)

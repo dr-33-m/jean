@@ -64,10 +64,10 @@ export function OpenInButton({
         case 'github':
           if (branch) openOnGitHub.mutate({ repoPath: worktreePath, branch })
           else
-            openInEditor.mutate({ worktreePath, editor: preferences?.editor })
+            openInEditor.mutate({ worktreePath, editor: preferences?.editor, customEditorCommand: preferences?.custom_editor_command })
           break
         default:
-          openInEditor.mutate({ worktreePath, editor: preferences?.editor })
+          openInEditor.mutate({ worktreePath, editor: preferences?.editor, customEditorCommand: preferences?.custom_editor_command })
       }
     },
     [
