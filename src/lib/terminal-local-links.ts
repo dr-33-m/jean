@@ -1,6 +1,5 @@
 import type { ILink, ILinkProvider, Terminal } from '@xterm/xterm'
 import { invoke } from '@/lib/transport'
-import type { AppPreferences } from '@/types/preferences'
 
 export interface LocalTerminalLink {
   text: string
@@ -26,7 +25,7 @@ interface ResolvedLocalTerminalLink {
 
 type OpenResolvedLocalFile = (
   resolved: ResolvedLocalTerminalLink,
-  editor: AppPreferences['editor'] | undefined
+  editor: string | undefined
 ) => Promise<void>
 
 const openResolvedLocalFile: OpenResolvedLocalFile = (resolved, editor) =>
@@ -227,9 +226,7 @@ export class LocalTerminalLinkProvider implements ILinkProvider {
   constructor(
     private readonly terminal: Terminal,
     private readonly worktreePath: string,
-    private readonly getEditor: () =>
-      | AppPreferences['editor']
-      | undefined = () => undefined,
+    private readonly getEditor: () => string | undefined = () => undefined,
     private readonly openFile: OpenResolvedLocalFile = openResolvedLocalFile
   ) {}
 

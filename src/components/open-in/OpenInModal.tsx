@@ -124,7 +124,10 @@ export function OpenInModal() {
     const allOptions: ModalOption[] = [
       {
         id: 'editor',
-        label: getEditorLabel(preferences?.editor, preferences?.custom_editor_command),
+        label: getEditorLabel(
+          preferences?.editor,
+          preferences?.custom_editor_command
+        ),
         icon: Code,
         key: 'E',
       },
@@ -163,6 +166,7 @@ export function OpenInModal() {
       : allOptions.filter(opt => opt.id === 'github' || opt.id === 'open-pr')
   }, [
     preferences?.editor,
+    preferences?.custom_editor_command,
     preferences?.terminal,
     isNative,
     worktree?.pr_url,

@@ -31,6 +31,7 @@ import { preferencesQueryKeys } from '@/services/preferences'
 import { isPanelTerminal, useTerminalStore } from '@/store/terminal-store'
 import {
   defaultPreferences,
+  resolveEditorCommand,
   type AppPreferences,
   type TerminalFont,
 } from '@/types/preferences'
@@ -692,7 +693,10 @@ async function createTerminalForRenderer(
       const preferences = queryClient.getQueryData<AppPreferences>(
         preferencesQueryKeys.preferences()
       )
-      return preferences?.editor
+      return resolveEditorCommand(
+        preferences?.editor,
+        preferences?.custom_editor_command
+      )
     })
   )
   return { terminal, fitAddon, appearance }

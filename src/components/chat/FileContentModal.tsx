@@ -32,7 +32,11 @@ import { getFilename } from '@/lib/path-utils'
 import { useTheme } from '@/hooks/use-theme'
 import { isNativeApp } from '@/lib/environment'
 import { usePreferences } from '@/services/preferences'
-import type { SyntaxTheme } from '@/types/preferences'
+import {
+  getEditorLabel,
+  resolveEditorCommand,
+  type SyntaxTheme,
+} from '@/types/preferences'
 import { toast } from 'sonner'
 
 // Lazy load CodeEditor since it's heavy
@@ -117,6 +121,10 @@ export function FileContentModal({ filePath, onClose }: FileContentModalProps) {
 
   const { theme } = useTheme()
   const { data: preferences } = usePreferences()
+  const editorLabel = getEditorLabel(
+    preferences?.editor,
+    preferences?.custom_editor_command
+  )
 
   // Resolve 'system' theme to actual dark/light
   const resolvedTheme = useMemo((): 'dark' | 'light' => {
@@ -205,13 +213,16 @@ export function FileContentModal({ filePath, onClose }: FileContentModalProps) {
     try {
       await invoke('open_file_in_default_app', {
         path: filePath,
-        editor: preferences?.editor,
+        editor: resolveEditorCommand(
+          preferences?.editor,
+          preferences?.custom_editor_command
+        ),
       })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       toast.error(`Failed to open: ${message}`)
     }
-  }, [filePath, preferences?.editor])
+  }, [filePath, preferences?.editor, preferences?.custom_editor_command])
 
   // Toggle edit mode
   const handleToggleEdit = useCallback(() => {
@@ -296,7 +307,7 @@ export function FileContentModal({ filePath, onClose }: FileContentModalProps) {
                     onClick={handleOpenExternal}
                   >
                     <ExternalLink className="h-4 w-4 mr-1" />
-                    Open in Editor
+                    Open in {editorLabel}
                   </Button>
                 ) : null}
               </div>

@@ -6,6 +6,9 @@ import {
   GROK_DEFAULT_MAGIC_PROMPT_BACKENDS,
   PI_DEFAULT_MAGIC_PROMPT_BACKENDS,
   PI_DEFAULT_MAGIC_PROMPT_MODELS,
+  getEditorLabel,
+  getOpenInDefaultLabel,
+  resolveEditorCommand,
   resolveMagicPromptBackend,
   resolveMagicPromptProvider,
 } from './preferences'
@@ -49,6 +52,20 @@ describe('magic prompt preference resolvers', () => {
 
   it('keeps automatic recaps on by default', () => {
     expect(defaultPreferences.auto_recaps_enabled).toBe(true)
+  })
+
+  it('uses the custom editor command for labels and invocation values', () => {
+    expect(getEditorLabel('custom', 'codium')).toBe('Codium')
+    expect(getEditorLabel('custom', '/usr/bin/codium')).toBe('Codium')
+    expect(
+      getOpenInDefaultLabel('editor', 'custom', 'terminal', 'codium')
+    ).toBe('Codium')
+    expect(resolveEditorCommand('custom', ' codium ')).toBe('codium')
+  })
+
+  it('preserves built-in editor ids when resolving editor commands', () => {
+    expect(resolveEditorCommand('vscode', 'codium')).toBe('vscode')
+    expect(resolveEditorCommand('cursor')).toBe('cursor')
   })
 
   it('prefers explicit backend overrides', () => {

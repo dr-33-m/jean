@@ -31,6 +31,7 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { usePreferences } from '@/services/preferences'
 import { invoke } from '@/lib/transport'
 import { isNativeApp } from '@/lib/environment'
+import { getEditorLabel, resolveEditorCommand } from '@/types/preferences'
 
 function DiffBlock({
   fileName,
@@ -112,6 +113,10 @@ export function MessageDiffModal({
   )
   const { theme } = useTheme()
   const { data: preferences } = usePreferences()
+  const editorLabel = getEditorLabel(
+    preferences?.editor,
+    preferences?.custom_editor_command
+  )
 
   const resolvedThemeType = useMemo((): 'dark' | 'light' => {
     if (theme === 'system') {
@@ -210,20 +215,23 @@ export function MessageDiffModal({
     mutationFn: () =>
       invoke('open_file_in_default_app', {
         path: filePath,
-        editor: preferences?.editor,
+        editor: resolveEditorCommand(
+          preferences?.editor,
+          preferences?.custom_editor_command
+        ),
       }),
   })
 
   const handleOpenExternal = useCallback(() => {
-    const id = toast.loading('Opening in editor…')
+    const id = toast.loading(`Opening in ${editorLabel}…`)
     openFileMutation.mutate(undefined, {
-      onSuccess: () => toast.success('Opened in editor', { id }),
+      onSuccess: () => toast.success(`Opened in ${editorLabel}`, { id }),
       onError: err => {
         const message = err instanceof Error ? err.message : String(err)
         toast.error(`Failed to open: ${message}`, { id })
       },
     })
-  }, [openFileMutation])
+  }, [editorLabel, openFileMutation])
 
   const hasCurrentStats =
     currentStats && (currentStats.additions > 0 || currentStats.deletions > 0)
@@ -307,7 +315,7 @@ export function MessageDiffModal({
                 className="ml-auto flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               >
                 <ExternalLink className="h-4 w-4" />
-                <span className="hidden sm:inline">Open in Editor</span>
+                <span className="hidden sm:inline">Open in {editorLabel}</span>
               </button>
             )}
           </div>
@@ -325,7 +333,10 @@ export function MessageDiffModal({
             </div>
           ) : currentChangeFile ? (
             <DiffBlock fileName={relativePath}>
-              <FileDiff fileDiff={currentChangeFile} options={fileDiffOptions} />
+              <FileDiff
+                fileDiff={currentChangeFile}
+                options={fileDiffOptions}
+              />
             </DiffBlock>
           ) : (
             <div className="flex items-center justify-center h-full text-muted-foreground text-sm">

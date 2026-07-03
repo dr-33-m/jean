@@ -5963,6 +5963,15 @@ fn editor_file_args(
     }
 }
 
+fn editor_cli_command(editor: &str) -> &str {
+    match editor {
+        "vscode" => "code",
+        "xcode" => "xed",
+        "intellij" => "idea",
+        other => other,
+    }
+}
+
 fn macos_open_app_args(
     app_name: &str,
     editor: &str,
@@ -6005,6 +6014,24 @@ pub async fn open_file_in_default_app(
     #[cfg(target_os = "macos")]
     {
         let result = match editor_app.as_str() {
+            "vscode" => match std::process::Command::new(editor_cli_command("vscode"))
+                .args(editor_file_args("vscode", &path, line, column))
+                .spawn()
+            {
+                Ok(child) => Ok(child),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    std::process::Command::new("open")
+                        .args(macos_open_app_args(
+                            "Visual Studio Code",
+                            "vscode",
+                            &path,
+                            line,
+                            column,
+                        ))
+                        .spawn()
+                }
+                Err(e) => Err(e),
+            },
             "zed" => match std::process::Command::new("zed")
                 .args(editor_file_args("zed", &path, line, column))
                 .spawn()
@@ -6050,24 +6077,9 @@ pub async fn open_file_in_default_app(
                 }
                 Err(e) => Err(e),
             },
-            _ => match std::process::Command::new("code")
-                .args(editor_file_args("vscode", &path, line, column))
-                .spawn()
-            {
-                Ok(child) => Ok(child),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    std::process::Command::new("open")
-                        .args(macos_open_app_args(
-                            "Visual Studio Code",
-                            "vscode",
-                            &path,
-                            line,
-                            column,
-                        ))
-                        .spawn()
-                }
-                Err(e) => Err(e),
-            },
+            _ => std::process::Command::new(&editor_app)
+                .args(editor_file_args(&editor_app, &path, line, column))
+                .spawn(),
         };
 
         result.map_err(|e| {
@@ -6088,6 +6100,11 @@ pub async fn open_file_in_default_app(
         const CREATE_NO_WINDOW: u32 = 0x08000000;
 
         let result = match editor_app.as_str() {
+            "vscode" => std::process::Command::new("cmd")
+                .args(["/c", editor_cli_command("vscode")])
+                .args(editor_file_args("vscode", &path, line, column))
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn(),
             "zed" => std::process::Command::new("zed")
                 .args(editor_file_args("zed", &path, line, column))
                 .spawn(),
@@ -6103,8 +6120,8 @@ pub async fn open_file_in_default_app(
                 .spawn(),
             "xcode" => return Err("Xcode is only available on macOS".to_string()),
             _ => std::process::Command::new("cmd")
-                .args(["/c", "code"])
-                .args(editor_file_args("vscode", &path, line, column))
+                .args(["/c", &editor_app])
+                .args(editor_file_args(&editor_app, &path, line, column))
                 .creation_flags(CREATE_NO_WINDOW)
                 .spawn(),
         };
@@ -6121,6 +6138,9 @@ pub async fn open_file_in_default_app(
     #[cfg(target_os = "linux")]
     {
         let result = match editor_app.as_str() {
+            "vscode" => std::process::Command::new(editor_cli_command("vscode"))
+                .args(editor_file_args("vscode", &path, line, column))
+                .spawn(),
             "zed" => std::process::Command::new("zed")
                 .args(editor_file_args("zed", &path, line, column))
                 .spawn(),
@@ -6131,8 +6151,8 @@ pub async fn open_file_in_default_app(
                 .args(editor_file_args("intellij", &path, line, column))
                 .spawn(),
             "xcode" => return Err("Xcode is only available on macOS".to_string()),
-            _ => std::process::Command::new("code")
-                .args(editor_file_args("vscode", &path, line, column))
+            _ => std::process::Command::new(&editor_app)
+                .args(editor_file_args(&editor_app, &path, line, column))
                 .spawn(),
         };
 
@@ -8774,6 +8794,21 @@ mod tests {
         assert_eq!(
             editor_file_args("cursor", "/tmp/main.ts", Some(42), None),
             vec!["-g".to_string(), "/tmp/main.ts:42".to_string()]
+        );
+    }
+
+    #[test]
+    fn editor_cli_command_maps_known_ids_but_keeps_custom_commands() {
+        assert_eq!(editor_cli_command("vscode"), "code");
+        assert_eq!(editor_cli_command("codium"), "codium");
+        assert_eq!(editor_cli_command("/usr/bin/codium"), "/usr/bin/codium");
+    }
+
+    #[test]
+    fn editor_file_args_preserve_location_for_code_compatible_custom_editors() {
+        assert_eq!(
+            editor_file_args("codium", "/tmp/main.ts", Some(42), Some(3)),
+            vec!["-g".to_string(), "/tmp/main.ts:42:3".to_string()]
         );
     }
 

@@ -15,7 +15,10 @@ import {
 } from '@/lib/session-debug'
 import type { CommandContext } from '@/lib/commands/types'
 import type { AppPreferences, ClaudeModel } from '@/types/preferences'
-import { resolveMagicPromptProvider } from '@/types/preferences'
+import {
+  resolveEditorCommand,
+  resolveMagicPromptProvider,
+} from '@/types/preferences'
 import type {
   ThinkingLevel,
   ExecutionMode,
@@ -313,19 +316,18 @@ export function useCommandContext(
     }
 
     try {
-      const resolvedEditor =
-        preferences?.editor === 'custom' && preferences?.custom_editor_command
-          ? preferences.custom_editor_command
-          : preferences?.editor
       await invoke('open_worktree_in_editor', {
         worktreePath,
-        editor: resolvedEditor,
+        editor: resolveEditorCommand(
+          preferences?.editor,
+          preferences?.custom_editor_command
+        ),
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       notify(message, undefined, { type: 'error' })
     }
-  }, [getTargetPath, preferences?.editor])
+  }, [getTargetPath, preferences?.editor, preferences?.custom_editor_command])
 
   // Open In - GitHub
   const openOnGitHub = useCallback(async () => {

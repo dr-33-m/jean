@@ -1694,11 +1694,12 @@ export function getNewSessionKindLabel(
 export function getOpenInDefaultLabel(
   openIn: OpenInDefault | undefined,
   editor: EditorApp | undefined,
-  terminal: TerminalApp | undefined
+  terminal: TerminalApp | undefined,
+  customEditorCommand?: string
 ): string {
   switch (openIn) {
     case 'editor':
-      return getEditorLabel(editor)
+      return getEditorLabel(editor, customEditorCommand)
     case 'terminal':
       return getTerminalLabel(terminal)
     case 'finder':
@@ -1706,7 +1707,7 @@ export function getOpenInDefaultLabel(
     case 'github':
       return 'GitHub'
     default:
-      return getEditorLabel(editor)
+      return getEditorLabel(editor, customEditorCommand)
   }
 }
 
@@ -1897,14 +1898,24 @@ export function getEditorLabel(
   editor: EditorApp | undefined,
   customCommand?: string
 ): string {
-  if (editor === 'custom' && customCommand) {
+  const command = customCommand?.trim()
+  if (editor === 'custom' && command) {
     // Show the command name (e.g. "codium" from "/usr/bin/codium" or just "codium")
-    const name = customCommand.split('/').pop()?.split('\\').pop() ?? customCommand
+    const name = command.split('/').pop()?.split('\\').pop() ?? command
     return name.charAt(0).toUpperCase() + name.slice(1)
   }
   // Search all options (not just platform-filtered) so saved cross-platform values resolve
   const option = allEditorOptions.find(opt => opt.value === editor)
   return option?.label ?? 'Editor'
+}
+
+export function resolveEditorCommand(
+  editor: EditorApp | undefined,
+  customCommand?: string
+): string | undefined {
+  const command = customCommand?.trim()
+  if (editor === 'custom' && command) return command
+  return editor
 }
 
 export const defaultPreferences: AppPreferences = {

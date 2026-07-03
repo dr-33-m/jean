@@ -124,4 +124,49 @@ describe('terminal local links', () => {
       },
     ])
   })
+
+  it('opens terminal file links with a resolved custom editor command', () => {
+    const opened: {
+      path: string
+      editor: string | undefined
+      line?: number
+      column?: number
+    }[] = []
+    const provider = new LocalTerminalLinkProvider(
+      {
+        buffer: {
+          active: {
+            getLine: (index: number) =>
+              index === 0
+                ? {
+                    isWrapped: false,
+                    translateToString: () => 'src/main.ts:12:3',
+                  }
+                : undefined,
+          },
+        },
+      } as never,
+      '/Users/me/app',
+      () => 'codium',
+      (resolved, editor) => {
+        opened.push({ ...resolved, editor })
+        return Promise.resolve()
+      }
+    )
+
+    let providedLinks: ILink[] | undefined
+    provider.provideLinks(1, links => {
+      providedLinks = links
+    })
+    providedLinks?.[0]?.activate(undefined as never, '')
+
+    expect(opened).toEqual([
+      {
+        path: '/Users/me/app/src/main.ts',
+        editor: 'codium',
+        line: 12,
+        column: 3,
+      },
+    ])
+  })
 })

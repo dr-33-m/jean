@@ -64,10 +64,18 @@ export function OpenInButton({
         case 'github':
           if (branch) openOnGitHub.mutate({ repoPath: worktreePath, branch })
           else
-            openInEditor.mutate({ worktreePath, editor: preferences?.editor, customEditorCommand: preferences?.custom_editor_command })
+            openInEditor.mutate({
+              worktreePath,
+              editor: preferences?.editor,
+              customEditorCommand: preferences?.custom_editor_command,
+            })
           break
         default:
-          openInEditor.mutate({ worktreePath, editor: preferences?.editor, customEditorCommand: preferences?.custom_editor_command })
+          openInEditor.mutate({
+            worktreePath,
+            editor: preferences?.editor,
+            customEditorCommand: preferences?.custom_editor_command,
+          })
       }
     },
     [
@@ -78,6 +86,7 @@ export function OpenInButton({
       worktreePath,
       branch,
       preferences?.editor,
+      preferences?.custom_editor_command,
       preferences?.terminal,
     ]
   )
@@ -85,7 +94,8 @@ export function OpenInButton({
   const defaultLabel = getOpenInDefaultLabel(
     preferences?.open_in ?? 'editor',
     preferences?.editor,
-    preferences?.terminal
+    preferences?.terminal,
+    preferences?.custom_editor_command
   )
 
   if (!isNativeApp()) return null
@@ -123,7 +133,8 @@ export function OpenInButton({
             {getOpenInDefaultLabel(
               'editor',
               preferences?.editor,
-              preferences?.terminal
+              preferences?.terminal,
+              preferences?.custom_editor_command
             )}
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => openAction('terminal')}>

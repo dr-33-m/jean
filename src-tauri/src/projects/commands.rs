@@ -4012,6 +4012,7 @@ fn format_open_error(app_name: &str, error: &std::io::Error) -> String {
         "cursor" => "Cursor ('cursor')",
         "zed" => "Zed ('zed')",
         "xcode" => "Xcode ('xed')",
+        "intellij" => "IntelliJ IDEA ('idea')",
         other => other,
     };
     if error.kind() == std::io::ErrorKind::NotFound {
@@ -4215,6 +4216,18 @@ pub async fn open_worktree_in_editor(
     #[cfg(target_os = "macos")]
     {
         let result = match editor_app.as_str() {
+            "vscode" => match std::process::Command::new("code")
+                .arg(&worktree_path)
+                .spawn()
+            {
+                Ok(child) => Ok(child),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    std::process::Command::new("open")
+                        .args(["-a", "Visual Studio Code", &worktree_path])
+                        .spawn()
+                }
+                Err(e) => Err(e),
+            },
             "zed" => match std::process::Command::new("zed")
                 .arg(&worktree_path)
                 .spawn()
@@ -4285,6 +4298,10 @@ pub async fn open_worktree_in_editor(
             "zed" => std::process::Command::new("zed")
                 .arg(&worktree_path)
                 .spawn(),
+            "vscode" => std::process::Command::new("cmd")
+                .args(["/c", "code", &worktree_path])
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn(),
             "cursor" => std::process::Command::new("cmd")
                 .args(["/c", "cursor", &worktree_path])
                 .creation_flags(CREATE_NO_WINDOW)
@@ -4319,6 +4336,9 @@ pub async fn open_worktree_in_editor(
     {
         let result = match editor_app.as_str() {
             "zed" => std::process::Command::new("zed")
+                .arg(&worktree_path)
+                .spawn(),
+            "vscode" => std::process::Command::new("code")
                 .arg(&worktree_path)
                 .spawn(),
             "cursor" => std::process::Command::new("cursor")

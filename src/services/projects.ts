@@ -29,7 +29,7 @@ import { useChatStore } from '@/store/chat-store'
 import { useUIStore } from '@/store/ui-store'
 import { getFileManagerName } from '@/lib/platform'
 
-import type { AppPreferences } from '@/types/preferences'
+import { resolveEditorCommand, type AppPreferences } from '@/types/preferences'
 import type { AdvisoryContext } from '@/types/github'
 import { hasBackend } from '@/lib/environment'
 import { openExternal, preOpenWindow } from '@/lib/platform'
@@ -2072,7 +2072,7 @@ export function useOpenWorktreeInEditor() {
       customEditorCommand,
     }: {
       worktreePath: string
-      editor?: string
+      editor?: AppPreferences['editor']
       customEditorCommand?: string
     }): Promise<void> => {
       if (!isTauri()) {
@@ -2080,12 +2080,15 @@ export function useOpenWorktreeInEditor() {
       }
 
       // Resolve 'custom' editor to the actual CLI command
-      const resolvedEditor =
-        editor === 'custom' && customEditorCommand
-          ? customEditorCommand
-          : editor
-      logger.debug('Opening worktree in Editor', { worktreePath, editor: resolvedEditor })
-      await invoke('open_worktree_in_editor', { worktreePath, editor: resolvedEditor })
+      const resolvedEditor = resolveEditorCommand(editor, customEditorCommand)
+      logger.debug('Opening worktree in Editor', {
+        worktreePath,
+        editor: resolvedEditor,
+      })
+      await invoke('open_worktree_in_editor', {
+        worktreePath,
+        editor: resolvedEditor,
+      })
       logger.info('Opened worktree in Editor')
     },
     onError: error => {
