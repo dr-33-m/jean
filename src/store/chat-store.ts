@@ -561,6 +561,11 @@ interface ChatUIState {
   enqueueMessage: (sessionId: string, message: QueuedMessage) => void
   dequeueMessage: (sessionId: string) => QueuedMessage | undefined
   removeQueuedMessage: (sessionId: string, messageId: string) => void
+  updateQueuedMessage: (
+    sessionId: string,
+    messageId: string,
+    message: string
+  ) => void
   moveQueuedMessageFront: (sessionId: string, messageId: string) => void
   clearQueue: (sessionId: string) => void
   getQueueLength: (sessionId: string) => number
@@ -2543,6 +2548,25 @@ export const useChatStore = create<ChatUIState>()(
           'removeQueuedMessage'
         ),
 
+      updateQueuedMessage: (sessionId, messageId, message) =>
+        set(
+          state => {
+            const queue = state.messageQueues[sessionId] ?? []
+            const idx = queue.findIndex(m => m.id === messageId)
+            if (idx === -1 || queue[idx]?.message === message) return state
+            return {
+              messageQueues: {
+                ...state.messageQueues,
+                [sessionId]: queue.map(m =>
+                  m.id === messageId ? { ...m, message } : m
+                ),
+              },
+            }
+          },
+          undefined,
+          'updateQueuedMessage'
+        ),
+
       moveQueuedMessageFront: (sessionId, messageId) =>
         set(
           state => {
@@ -2895,6 +2919,8 @@ export const useChatStore = create<ChatUIState>()(
               state.sendingSessionIds
             const { [sessionId]: _wi, ...waitingForInputSessionIds } =
               state.waitingForInputSessionIds
+            const { [sessionId]: _reviewing, ...reviewingSessions } =
+              state.reviewingSessions
             const { [sessionId]: _sp, ...streamingPlanApprovals } =
               state.streamingPlanApprovals
             const { [sessionId]: _em, ...executingModes } = state.executingModes
@@ -2914,10 +2940,7 @@ export const useChatStore = create<ChatUIState>()(
                 sendStarted > 0
                   ? { ...state.completedDurations, [sessionId]: elapsed }
                   : state.completedDurations,
-              reviewingSessions: {
-                ...state.reviewingSessions,
-                [sessionId]: true,
-              },
+              reviewingSessions,
             }
           },
           undefined,

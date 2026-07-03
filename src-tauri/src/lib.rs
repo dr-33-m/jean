@@ -112,6 +112,21 @@ fn greet(name: &str) -> String {
     format!("Hello, {name}! You've been greeted from Rust!")
 }
 
+#[tauri::command]
+fn get_server_platform() -> &'static str {
+    server_platform_name()
+}
+
+pub(crate) fn server_platform_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "mac"
+    } else {
+        "linux"
+    }
+}
+
 // ── WSL commands ────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -295,7 +310,7 @@ pub struct AppPreferences {
     pub default_codex_reasoning_effort: String, // Codex reasoning effort: low, medium, high, xhigh
     #[serde(default = "default_codex_goal_execution_mode")]
     pub codex_goal_execution_mode: String, // Codex /goal execution mode: build or yolo
-    #[serde(default)]
+    #[serde(default = "default_codex_multi_agent_enabled")]
     pub codex_multi_agent_enabled: bool, // Enable multi-agent collaboration (experimental)
     #[serde(default = "default_codex_auto_steer")]
     pub codex_auto_steer_enabled: bool, // Steer prompts into a running Codex turn instead of queueing (default: true)
@@ -471,7 +486,7 @@ fn migrate_default_claude_model(model: &str) -> Option<&'static str> {
         "claude-opus-4-7[1m]" => Some("claude-opus-4-8[1m]"),
         "claude-opus-4-7[1m]-fast" => Some("claude-opus-4-8[1m]-fast"),
         "claude-opus-4-6-fast" => Some("claude-opus-4-6[1m]-fast"),
-        "sonnet" => Some("claude-sonnet-4-6[1m]"),
+        "sonnet" => Some("claude-sonnet-5"),
         _ => None,
     }
 }
@@ -613,6 +628,15 @@ fn maybe_auto_select_system_coderabbit(
     false
 }
 
+fn normalize_parallel_execution_preferences(preferences: &mut AppPreferences) -> bool {
+    if preferences.parallel_execution_prompt_enabled && !preferences.codex_multi_agent_enabled {
+        preferences.codex_multi_agent_enabled = true;
+        return true;
+    }
+
+    false
+}
+
 fn default_codex_model() -> String {
     "gpt-5.5".to_string()
 }
@@ -647,6 +671,10 @@ fn default_codex_reasoning_effort() -> String {
 
 fn default_codex_goal_execution_mode() -> String {
     "build".to_string()
+}
+
+fn default_codex_multi_agent_enabled() -> bool {
+    true
 }
 
 fn default_codex_max_agent_threads() -> u32 {
@@ -729,6 +757,40 @@ mod tests {
         assert!(prompt.contains("Always implement the simplest maintainable solution"));
         assert!(prompt.contains("Clickable References"));
         assert!(prompt.contains("include clickable links when available"));
+    }
+
+    #[test]
+    fn codex_multi_agent_defaults_on_with_parallel_prompting() {
+        let prefs = AppPreferences::default();
+
+        assert!(prefs.parallel_execution_prompt_enabled);
+        assert!(prefs.codex_multi_agent_enabled);
+    }
+
+    #[test]
+    fn parallel_prompting_enables_codex_multi_agent_for_existing_preferences() {
+        let mut prefs = AppPreferences {
+            parallel_execution_prompt_enabled: true,
+            codex_multi_agent_enabled: false,
+            ..Default::default()
+        };
+
+        super::normalize_parallel_execution_preferences(&mut prefs);
+
+        assert!(prefs.codex_multi_agent_enabled);
+    }
+
+    #[test]
+    fn disabled_parallel_prompting_does_not_force_codex_multi_agent() {
+        let mut prefs = AppPreferences {
+            parallel_execution_prompt_enabled: false,
+            codex_multi_agent_enabled: false,
+            ..Default::default()
+        };
+
+        super::normalize_parallel_execution_preferences(&mut prefs);
+
+        assert!(!prefs.codex_multi_agent_enabled);
     }
 
     #[test]
@@ -877,6 +939,14 @@ mod tests {
         assert_eq!(super::migrate_default_claude_model("claude-opus-4-8"), None);
         assert_eq!(super::migrate_default_claude_model("claude-opus-4-7"), None);
         assert_eq!(super::migrate_default_claude_model("claude-opus-4-6"), None);
+    }
+
+    #[test]
+    fn migrate_default_claude_model_updates_sonnet_alias() {
+        assert_eq!(
+            super::migrate_default_claude_model("sonnet"),
+            Some("claude-sonnet-5")
+        );
     }
 
     #[test]
@@ -2094,7 +2164,7 @@ impl Default for AppPreferences {
             selected_grok_model: default_grok_model(),
             default_codex_reasoning_effort: default_codex_reasoning_effort(),
             codex_goal_execution_mode: default_codex_goal_execution_mode(),
-            codex_multi_agent_enabled: false,
+            codex_multi_agent_enabled: default_codex_multi_agent_enabled(),
             codex_auto_steer_enabled: default_codex_auto_steer(),
             opencode_auto_steer_enabled: default_opencode_auto_steer(),
             pi_auto_steer_enabled: default_pi_auto_steer(),
@@ -2399,6 +2469,7 @@ pub fn load_preferences_sync(app: &AppHandle) -> Result<AppPreferences, String> 
         serde_json::from_str(&contents).map_err(|e| format!("Failed to parse preferences: {e}"))?;
     let mut preferences: AppPreferences = serde_json::from_value(raw_preferences.clone())
         .map_err(|e| format!("Failed to parse preferences: {e}"))?;
+    normalize_parallel_execution_preferences(&mut preferences);
     maybe_auto_select_system_coderabbit(app, &mut preferences, Some(&raw_preferences));
     Ok(preferences)
 }
@@ -2446,6 +2517,7 @@ async fn load_preferences(app: AppHandle) -> Result<AppPreferences, String> {
         preferences.selected_model = new_model.to_string();
         needs_resave = true;
     }
+    needs_resave |= normalize_parallel_execution_preferences(&mut preferences);
 
     // Migrate legacy magic-prompt model names ("opus" → "claude-opus-4-8[1m]")
     // and legacy auto-naming models ("haiku" → "sonnet")
@@ -2517,6 +2589,9 @@ async fn load_preferences(app: AppHandle) -> Result<AppPreferences, String> {
 
 #[tauri::command]
 async fn save_preferences(app: AppHandle, preferences: AppPreferences) -> Result<(), String> {
+    let mut preferences = preferences;
+    normalize_parallel_execution_preferences(&mut preferences);
+
     // Validate theme value
     validate_theme(&preferences.theme)?;
 
@@ -4452,6 +4527,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             greet,
+            get_server_platform,
             load_preferences,
             save_preferences,
             patch_preferences,
@@ -4480,6 +4556,7 @@ pub fn run() {
             projects::get_worktree_diff,
             projects::create_worktree,
             projects::create_worktree_from_existing_branch,
+            projects::fork_session_to_worktree,
             projects::checkout_pr,
             projects::delete_worktree,
             projects::create_base_session,
@@ -4510,6 +4587,10 @@ pub fn run() {
             projects::revert_last_local_commit,
             projects::run_review_with_ai,
             projects::run_coderabbit_review,
+            projects::start_review_job,
+            projects::get_review_job,
+            projects::list_review_jobs,
+            projects::cancel_review_job,
             projects::trigger_coderabbit_pr_review,
             projects::cancel_review_with_ai,
             projects::list_github_releases,
@@ -4559,6 +4640,9 @@ pub fn run() {
             projects::list_codex_skills,
             projects::list_opencode_skills,
             projects::list_cursor_skills,
+            projects::list_pi_skills,
+            projects::list_commandcode_skills,
+            projects::list_grok_skills,
             projects::list_plugin_skills,
             // GitHub issues commands
             projects::list_github_labels,
@@ -4646,6 +4730,8 @@ pub fn run() {
             browser::browser_get_url,
             browser::browser_close,
             browser::browser_report_title,
+            browser::browser_enable_grab,
+            browser::browser_report_grab_context,
             browser::get_active_browser_tabs,
             browser::has_active_browser_tab,
             // Chat commands - Session management
@@ -4656,6 +4742,8 @@ pub fn run() {
             chat::get_session,
             chat::load_older_session_messages,
             chat::list_native_cli_sessions,
+            chat::bind_native_cli_session,
+            chat::track_native_cli_session,
             chat::create_session,
             chat::rename_session,
             chat::regenerate_session_name,
@@ -4700,6 +4788,7 @@ pub fn run() {
             chat::enqueue_message,
             chat::dequeue_message,
             chat::remove_queued_message,
+            chat::update_queued_message,
             chat::clear_message_queue,
             chat::move_queued_message_front,
             chat::steer_codex_turn,
@@ -4747,6 +4836,7 @@ pub fn run() {
             claude_cli::detect_claude_in_path,
             claude_cli::get_claude_usage,
             claude_cli::get_available_cli_versions,
+            claude_cli::check_claude_cli_version_exists,
             claude_cli::install_claude_cli,
             claude_cli::uninstall_claude_cli,
             // Codex CLI management commands
@@ -4755,6 +4845,7 @@ pub fn run() {
             codex_cli::check_codex_cli_auth,
             codex_cli::get_codex_usage,
             codex_cli::get_available_codex_versions,
+            codex_cli::check_codex_cli_version_exists,
             codex_cli::install_codex_cli,
             codex_cli::uninstall_codex_cli,
             // CodeRabbit CLI management commands
@@ -4762,6 +4853,7 @@ pub fn run() {
             coderabbit_cli::detect_coderabbit_in_path,
             coderabbit_cli::check_coderabbit_cli_auth,
             coderabbit_cli::get_available_coderabbit_versions,
+            coderabbit_cli::check_coderabbit_cli_version_exists,
             coderabbit_cli::install_coderabbit_cli,
             coderabbit_cli::uninstall_coderabbit_cli,
             coderabbit_cli::update_coderabbit_cli,
@@ -4771,6 +4863,7 @@ pub fn run() {
             commandcode_cli::check_commandcode_cli_auth,
             commandcode_cli::list_commandcode_models,
             commandcode_cli::get_available_commandcode_versions,
+            commandcode_cli::check_commandcode_cli_version_exists,
             commandcode_cli::get_commandcode_install_command,
             commandcode_cli::install_commandcode_cli,
             commandcode_cli::uninstall_commandcode_cli,
@@ -4781,6 +4874,7 @@ pub fn run() {
             pi_cli::check_pi_cli_auth,
             pi_cli::list_pi_models,
             pi_cli::get_available_pi_versions,
+            pi_cli::check_pi_cli_version_exists,
             pi_cli::install_pi_cli,
             pi_cli::uninstall_pi_cli,
             // Cursor CLI management commands
@@ -4795,6 +4889,7 @@ pub fn run() {
             grok_cli::check_grok_cli_auth,
             grok_cli::list_grok_models,
             grok_cli::get_available_grok_versions,
+            grok_cli::check_grok_cli_version_exists,
             grok_cli::get_grok_install_command,
             grok_cli::install_grok_cli,
             grok_cli::uninstall_grok_cli,
@@ -4805,6 +4900,7 @@ pub fn run() {
             opencode_cli::detect_opencode_in_path,
             opencode_cli::check_opencode_cli_auth,
             opencode_cli::get_available_opencode_versions,
+            opencode_cli::check_opencode_cli_version_exists,
             opencode_cli::install_opencode_cli,
             opencode_cli::uninstall_opencode_cli,
             opencode_cli::list_opencode_models,
@@ -4813,6 +4909,7 @@ pub fn run() {
             gh_cli::detect_gh_in_path,
             gh_cli::check_gh_cli_auth,
             gh_cli::get_available_gh_versions,
+            gh_cli::check_gh_cli_version_exists,
             gh_cli::install_gh_cli,
             gh_cli::uninstall_gh_cli,
             // Generic CLI update command (path-installed CLIs)

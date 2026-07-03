@@ -187,6 +187,11 @@ export function MessageDiffModal({
     [currentChangeFile]
   )
 
+  const currentChangeKey = useMemo(() => {
+    if (!patch) return relativePath
+    return `${relativePath}:${patch.length}:${patch.slice(0, 80)}:${patch.slice(-80)}`
+  }, [patch, relativePath])
+
   const fileDiffOptions = useMemo(
     () => ({
       theme: {
@@ -334,6 +339,7 @@ export function MessageDiffModal({
           ) : currentChangeFile ? (
             <DiffBlock fileName={relativePath}>
               <FileDiff
+                key={currentChangeKey}
                 fileDiff={currentChangeFile}
                 options={fileDiffOptions}
               />

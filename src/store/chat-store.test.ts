@@ -253,7 +253,7 @@ describe('ChatStore', () => {
       expect(state.sendingSessionIds['session-1']).toBeUndefined()
       expect(state.sendStartedAt['session-1']).toBeUndefined()
       expect(state.completedDurations['session-1']).toBeGreaterThanOrEqual(0)
-      expect(state.reviewingSessions['session-1']).toBe(true)
+      expect(state.reviewingSessions['session-1']).toBeUndefined()
     })
 
     it('stores completed duration when a session completes', () => {
@@ -788,6 +788,34 @@ describe('ChatStore', () => {
       expect(useChatStore.getState().messageQueues['session-1']).toBe(before)
 
       moveQueuedMessageFront('session-1', 'msg-1')
+      expect(useChatStore.getState().messageQueues['session-1']).toBe(before)
+    })
+
+    it('updates a queued message text by id', () => {
+      const { enqueueMessage, updateQueuedMessage, getQueuedMessages } =
+        useChatStore.getState()
+
+      enqueueMessage('session-1', createMockMessage('msg-1', 'First'))
+      enqueueMessage('session-1', createMockMessage('msg-2', 'Second'))
+
+      updateQueuedMessage('session-1', 'msg-2', 'Updated second')
+
+      expect(getQueuedMessages('session-1').map(m => m.message)).toEqual([
+        'First',
+        'Updated second',
+      ])
+    })
+
+    it('queued message update is a no-op for unknown id or unchanged text', () => {
+      const { enqueueMessage, updateQueuedMessage } = useChatStore.getState()
+
+      enqueueMessage('session-1', createMockMessage('msg-1', 'First'))
+
+      const before = useChatStore.getState().messageQueues['session-1']
+      updateQueuedMessage('session-1', 'unknown-id', 'Updated')
+      expect(useChatStore.getState().messageQueues['session-1']).toBe(before)
+
+      updateQueuedMessage('session-1', 'msg-1', 'First')
       expect(useChatStore.getState().messageQueues['session-1']).toBe(before)
     })
   })

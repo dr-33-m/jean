@@ -1244,6 +1244,7 @@ export const fileEditModeOptions: { value: FileEditMode; label: string }[] = [
 
 export type ClaudeModel =
   | 'claude-fable-5'
+  | 'claude-sonnet-5'
   | 'claude-opus-4-8'
   | 'claude-opus-4-8[1m]'
   | 'claude-opus-4-7'
@@ -1263,6 +1264,7 @@ export type ClaudeModel =
 
 export const modelOptions: { value: ClaudeModel; label: string }[] = [
   { value: 'claude-fable-5', label: 'Claude Fable 5' },
+  { value: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
   { value: 'claude-opus-4-8[1m]', label: 'Claude Opus 4.8 (1M)' },
   { value: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
   { value: 'claude-opus-4-7[1m]', label: 'Claude Opus 4.7 (1M)' },
@@ -1277,7 +1279,7 @@ export const modelOptions: { value: ClaudeModel; label: string }[] = [
 
 const legacyClaudeDefaultModelMap = {
   'claude-opus-4-6-fast': 'claude-opus-4-6[1m]-fast',
-  sonnet: 'claude-sonnet-4-6[1m]',
+  sonnet: 'claude-sonnet-5',
 } as const satisfies Partial<Record<ClaudeModel, ClaudeModel>>
 
 const knownClaudeModels = new Set<string>([
@@ -1994,7 +1996,7 @@ export const defaultPreferences: AppPreferences = {
   selected_grok_model: 'grok/grok-composer-2.5-fast', // Default Grok model
   default_codex_reasoning_effort: 'high', // Default: high reasoning
   codex_goal_execution_mode: 'build', // Default: build mode for goals
-  codex_multi_agent_enabled: false, // Default: disabled
+  codex_multi_agent_enabled: true, // Default: enabled to match parallel execution prompting
   codex_max_agent_threads: 3, // Default: 3 threads
   codex_auto_steer_enabled: true, // Default: steer Codex running turn instead of queueing
   opencode_auto_steer_enabled: true, // Default: steer OpenCode running turn instead of queueing

@@ -56,6 +56,20 @@ Rust and React communicate through three patterns:
    (Used by git status polling, PR status updates, worktree events)
 ```
 
+### Backend-Owned Long-Running Jobs
+
+Long-running operations that must survive web/mobile WebSocket disconnects
+should be owned by Rust, not by a pending frontend `invoke()` response. The
+frontend should start the job and receive an immediate job id; Rust
+should run the process, persist the final state, and emit best-effort progress
+events. On reconnect, the frontend recovers from persisted session/project data
+or job query commands instead of relying on the original WebSocket response.
+
+Current example: review magic uses `start_review_job`, which creates a Code
+Review session with a running indicator, starts the AI/CodeRabbit review in a
+Rust background task, prevents a second concurrent review for the same worktree,
+persists `review_results` into that session, and emits `review-job:updated`.
+
 ### Command-Centric Design
 
 All user actions flow through a centralized command system:
@@ -96,7 +110,15 @@ Additional systems (no dedicated docs yet):
   terminals. Full-screen pure CLI sessions persist their intent on `Session`
   (`primary_surface`, `terminal_command`, `terminal_label`) and lazily recreate
   a PTY only when the user reopens that session, so hidden historical CLI
-  sessions do not start background processes. The native CLI picker also merges
+  sessions do not start background processes. Native Claude terminal sessions
+  receive a generated `--session-id` when created. Codex and OpenCode terminal
+  sessions snapshot their backend history before launch and bind the single new
+  native session/thread ID back to Jean metadata; ambiguous concurrent matches
+  are never guessed. Cold restoration uses `claude --resume <id>`,
+  `codex resume <id>`, or `opencode --session <id>` while preserving global
+  permission/yolo flags. Legacy native terminal sessions without either a typed
+  ID or persisted resume arguments show the native-history picker instead of
+  silently launching an unrelated conversation. The native CLI picker also merges
   backend-owned history from local stores where stable (`~/.codex/sessions/**`
   and `~/.claude/projects/<escaped-cwd>/**`) and imports a chosen history row as
   a Jean terminal session running the backend's native resume command.

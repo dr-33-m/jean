@@ -68,6 +68,11 @@ describe('magic prompt preference resolvers', () => {
     expect(resolveEditorCommand('cursor')).toBe('cursor')
   })
 
+  it('enables Codex multi-agent by default with parallel prompting', () => {
+    expect(defaultPreferences.parallel_execution_prompt_enabled).toBe(true)
+    expect(defaultPreferences.codex_multi_agent_enabled).toBe(true)
+  })
+
   it('prefers explicit backend overrides', () => {
     expect(
       resolveMagicPromptBackend(

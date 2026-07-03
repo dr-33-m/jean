@@ -37,6 +37,7 @@ import type { AppPreferences } from '@/types/preferences'
 import { useChatStore } from '@/store/chat-store'
 import { useUIStore } from '@/store/ui-store'
 import { useTerminalStore } from '@/store/terminal-store'
+import { isNativeTerminalBackend } from '@/lib/native-cli-session'
 import { getResumeArgs } from '@/components/chat/session-card-utils'
 import type { ReviewResponse, Worktree } from '@/types/projects'
 
@@ -93,15 +94,51 @@ export function removeSessionFromAllSessionsCache(
 }
 
 /**
+ * Refresh one worktree's session list and mirror it into the cross-project
+ * ['all-sessions'] cache. This keeps the finished-session bell in sync when a
+ * background operation (like review) completes outside normal session polling.
+ */
+export async function refreshWorktreeSessionsCaches(
+  queryClient: QueryClient,
+  worktreeId: string,
+  worktreePath: string
+): Promise<WorktreeSessions | null> {
+  try {
+    const sessions = await invoke<WorktreeSessions>('get_sessions', {
+      worktreeId,
+      worktreePath,
+    })
+    queryClient.setQueryData(chatQueryKeys.sessions(worktreeId), sessions)
+    queryClient.setQueryData<AllSessionsResponse>(['all-sessions'], old => {
+      if (!old?.entries) return old
+      return {
+        ...old,
+        entries: old.entries.map(entry =>
+          entry.worktree_id === worktreeId
+            ? { ...entry, sessions: sessions.sessions }
+            : entry
+        ),
+      }
+    })
+    return sessions
+  } catch (error) {
+    logger.warn('Failed to refresh worktree sessions caches', {
+      error,
+      worktreeId,
+    })
+    return null
+  }
+}
+
+/**
  * Whether a session can be reconnected — i.e. it's a native CLI terminal
  * session with a known way to relaunch (a backend resume id, or its persisted
  * terminal command). Used to gate the "Reconnect" menu item.
  */
 export function canReconnectSession(session: Session): boolean {
-  return (
-    session.primary_surface === 'terminal' &&
-    (!!getResumeArgs(session) || !!session.terminal_command)
-  )
+  if (session.primary_surface !== 'terminal') return false
+  if (getResumeArgs(session)) return true
+  return !isNativeTerminalBackend(session.backend) && !!session.terminal_command
 }
 
 /**
@@ -131,13 +168,21 @@ export async function reconnectNativeCliSession(
   worktreeId: string,
   options?: { openModal?: boolean; showToast?: boolean; markOpened?: boolean }
 ): Promise<void> {
-  const { openModal = true, showToast = true, markOpened = true } = options ?? {}
+  const {
+    openModal = true,
+    showToast = true,
+    markOpened = true,
+  } = options ?? {}
   const resume = getResumeArgs(session)
-  const launch = resume ?? {
-    command: session.terminal_command ?? '',
-    args: session.terminal_command_args ?? [],
-  }
-  if (!launch.command) {
+  const launch =
+    resume ??
+    (!isNativeTerminalBackend(session.backend)
+      ? {
+          command: session.terminal_command ?? '',
+          args: session.terminal_command_args ?? [],
+        }
+      : null)
+  if (!launch?.command) {
     if (showToast) toast.error('No command available to reconnect this session')
     return
   }
@@ -732,6 +777,7 @@ export function useCreateSession() {
       terminalCommand,
       terminalCommandArgs,
       terminalLabel,
+      nativeSessionId,
     }: {
       worktreeId: string
       worktreePath: string
@@ -741,6 +787,7 @@ export function useCreateSession() {
       terminalCommand?: string | null
       terminalCommandArgs?: string[]
       terminalLabel?: string
+      nativeSessionId?: string
     }): Promise<Session> => {
       if (!isTauri()) {
         throw new Error('Not in Tauri context')
@@ -756,6 +803,7 @@ export function useCreateSession() {
         terminalCommand,
         terminalCommandArgs,
         terminalLabel,
+        nativeSessionId,
       })
       logger.info('Session created', { sessionId: session.id })
       return session
@@ -2650,6 +2698,26 @@ export function persistRemoveQueued(
     messageId,
   }).catch(err => {
     logger.error('Failed to persist remove queued', { err, sessionId })
+  })
+}
+
+/**
+ * Persist a queued message text edit.
+ * Returns false when the message is no longer queued.
+ */
+export async function persistUpdateQueued(
+  worktreeId: string,
+  worktreePath: string,
+  sessionId: string,
+  messageId: string,
+  message: string
+): Promise<boolean> {
+  return invoke<boolean>('update_queued_message', {
+    worktreeId,
+    worktreePath,
+    sessionId,
+    messageId,
+    message,
   })
 }
 

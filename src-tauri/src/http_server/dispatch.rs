@@ -89,6 +89,7 @@ pub async fn dispatch_command(
         // =====================================================================
         // Preferences & UI State
         // =====================================================================
+        "get_server_platform" => to_value(crate::server_platform_name()),
         "load_preferences" => {
             let result = crate::load_preferences(app.clone()).await?;
             to_value(result)
@@ -206,6 +207,19 @@ pub async fn dispatch_command(
             // (worktree:creating/created/error) that preserves the optimistic pending status.
             // Invalidating would refetch list_worktrees which overwrites status: 'pending',
             // preventing WorktreeSetupCard from appearing on the canvas.
+            to_value(result)
+        }
+        "fork_session_to_worktree" => {
+            let source_worktree_id: String =
+                field(&args, "sourceWorktreeId", "source_worktree_id")?;
+            let source_session_id: String = field(&args, "sourceSessionId", "source_session_id")?;
+            let result = crate::projects::fork_session_to_worktree(
+                app.clone(),
+                source_worktree_id,
+                source_session_id,
+            )
+            .await?;
+            emit_cache_invalidation(app, &["projects", "sessions", "session"]);
             to_value(result)
         }
         "delete_worktree" => {
@@ -415,7 +429,7 @@ pub async fn dispatch_command(
         "create_pr_with_ai_content" => {
             let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
             let session_id: Option<String> = field_opt(&args, "sessionId", "session_id")?;
-            let magic_prompt: Option<String> = field_opt(&args, "magicPrompt", "magic_prompt")?;
+            let magic_prompt: Option<String> = field_opt(&args, "customPrompt", "custom_prompt")?;
             let model: Option<String> = from_field_opt(&args, "model")?;
             let custom_profile_name: Option<String> =
                 field_opt(&args, "customProfileName", "custom_profile_name")?;
@@ -503,7 +517,7 @@ pub async fn dispatch_command(
         }
         "run_review_with_ai" => {
             let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
-            let magic_prompt: Option<String> = field_opt(&args, "magicPrompt", "magic_prompt")?;
+            let magic_prompt: Option<String> = field_opt(&args, "customPrompt", "custom_prompt")?;
             let model: Option<String> = from_field_opt(&args, "model")?;
             let custom_profile_name: Option<String> =
                 field_opt(&args, "customProfileName", "custom_profile_name")?;
@@ -520,6 +534,48 @@ pub async fn dispatch_command(
                 reasoning_effort,
             )
             .await?;
+            to_value(result)
+        }
+        "start_review_job" => {
+            let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;
+            let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
+            let source: String = from_field(&args, "source")?;
+            let magic_prompt: Option<String> = field_opt(&args, "customPrompt", "custom_prompt")?;
+            let model: Option<String> = from_field_opt(&args, "model")?;
+            let custom_profile_name: Option<String> =
+                field_opt(&args, "customProfileName", "custom_profile_name")?;
+            let review_run_id: Option<String> = field_opt(&args, "reviewRunId", "review_run_id")?;
+            let reasoning_effort: Option<String> =
+                field_opt(&args, "reasoningEffort", "reasoning_effort")?;
+            let review_type: Option<String> = field_opt(&args, "reviewType", "review_type")?;
+            let result = crate::projects::start_review_job(
+                app.clone(),
+                worktree_id,
+                worktree_path,
+                source,
+                magic_prompt,
+                model,
+                custom_profile_name,
+                review_run_id,
+                reasoning_effort,
+                review_type,
+            )
+            .await?;
+            to_value(result)
+        }
+        "get_review_job" => {
+            let job_id: String = field(&args, "jobId", "job_id")?;
+            let result = crate::projects::get_review_job(job_id).await?;
+            to_value(result)
+        }
+        "list_review_jobs" => {
+            let worktree_id: Option<String> = field_opt(&args, "worktreeId", "worktree_id")?;
+            let result = crate::projects::list_review_jobs(worktree_id).await?;
+            to_value(result)
+        }
+        "cancel_review_job" => {
+            let job_id: String = field(&args, "jobId", "job_id")?;
+            let result = crate::projects::cancel_review_job(job_id).await?;
             to_value(result)
         }
         "cancel_review_with_ai" => {
@@ -979,6 +1035,27 @@ pub async fn dispatch_command(
             .await?;
             to_value(result)
         }
+        "bind_native_cli_session" => {
+            let session_id: String = field(&args, "sessionId", "session_id")?;
+            let backend: String = from_field(&args, "backend")?;
+            let native_session_id: String = field(&args, "nativeSessionId", "native_session_id")?;
+            crate::chat::bind_native_cli_session(
+                app.clone(),
+                session_id,
+                backend,
+                native_session_id,
+            )
+            .await?;
+            Ok(Value::Null)
+        }
+        "track_native_cli_session" => {
+            let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
+            let session_id: String = field(&args, "sessionId", "session_id")?;
+            let backend: String = from_field(&args, "backend")?;
+            crate::chat::track_native_cli_session(app.clone(), worktree_path, session_id, backend)
+                .await?;
+            Ok(Value::Null)
+        }
         "get_session" => {
             let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;
             let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
@@ -1020,6 +1097,8 @@ pub async fn dispatch_command(
                 field_opt(&args, "terminalCommandArgs", "terminal_command_args")?;
             let terminal_label: Option<String> =
                 field_opt(&args, "terminalLabel", "terminal_label")?;
+            let native_session_id: Option<String> =
+                field_opt(&args, "nativeSessionId", "native_session_id")?;
             let result = crate::chat::create_session(
                 app.clone(),
                 worktree_id,
@@ -1030,6 +1109,7 @@ pub async fn dispatch_command(
                 terminal_command,
                 terminal_command_args,
                 terminal_label,
+                native_session_id,
             )
             .await?;
             to_value(result)
@@ -1698,6 +1778,18 @@ pub async fn dispatch_command(
             let result = crate::projects::list_cursor_skills().await?;
             to_value(result)
         }
+        "list_pi_skills" => {
+            let result = crate::projects::list_pi_skills().await?;
+            to_value(result)
+        }
+        "list_commandcode_skills" => {
+            let result = crate::projects::list_commandcode_skills().await?;
+            to_value(result)
+        }
+        "list_grok_skills" => {
+            let result = crate::projects::list_grok_skills().await?;
+            to_value(result)
+        }
         "list_plugin_skills" => {
             let result = crate::projects::list_plugin_skills().await?;
             to_value(result)
@@ -2042,7 +2134,8 @@ pub async fn dispatch_command(
         }
         "save_pasted_text" => {
             let content: String = from_field(&args, "content")?;
-            let result = crate::chat::save_pasted_text(app.clone(), content).await?;
+            let filename: Option<String> = from_field_opt(&args, "filename")?;
+            let result = crate::chat::save_pasted_text(app.clone(), content, filename).await?;
             to_value(result)
         }
         "update_pasted_text" => {
@@ -2136,6 +2229,11 @@ pub async fn dispatch_command(
             let result = crate::claude_cli::get_available_cli_versions().await?;
             to_value(result)
         }
+        "check_claude_cli_version_exists" => {
+            let version: String = from_field(&args, "version")?;
+            let result = crate::claude_cli::check_claude_cli_version_exists(version).await?;
+            to_value(result)
+        }
         "install_claude_cli" => {
             let version: Option<String> = from_field_opt(&args, "version")?;
             crate::claude_cli::install_claude_cli(app.clone(), version).await?;
@@ -2166,6 +2264,13 @@ pub async fn dispatch_command(
         "get_available_commandcode_versions" => {
             let result =
                 crate::commandcode_cli::get_available_commandcode_versions(app.clone()).await?;
+            to_value(result)
+        }
+        "check_commandcode_cli_version_exists" => {
+            let version: String = from_field(&args, "version")?;
+            let result =
+                crate::commandcode_cli::check_commandcode_cli_version_exists(app.clone(), version)
+                    .await?;
             to_value(result)
         }
         "get_commandcode_install_command" => {
@@ -2226,6 +2331,12 @@ pub async fn dispatch_command(
             let result = crate::grok_cli::get_available_grok_versions(app.clone()).await?;
             to_value(result)
         }
+        "check_grok_cli_version_exists" => {
+            let version: String = from_field(&args, "version")?;
+            let result =
+                crate::grok_cli::check_grok_cli_version_exists(app.clone(), version).await?;
+            to_value(result)
+        }
         "get_grok_install_command" => {
             let result = crate::grok_cli::get_grok_install_command(app.clone()).await?;
             to_value(result)
@@ -2267,6 +2378,11 @@ pub async fn dispatch_command(
             let result = crate::pi_cli::get_available_pi_versions(app.clone()).await?;
             to_value(result)
         }
+        "check_pi_cli_version_exists" => {
+            let version: String = from_field(&args, "version")?;
+            let result = crate::pi_cli::check_pi_cli_version_exists(app.clone(), version).await?;
+            to_value(result)
+        }
         "install_pi_cli" => {
             let version: Option<String> = from_field_opt(&args, "version")?;
             crate::pi_cli::install_pi_cli(app.clone(), version).await?;
@@ -2290,6 +2406,11 @@ pub async fn dispatch_command(
         }
         "get_available_opencode_versions" => {
             let result = crate::opencode_cli::get_available_opencode_versions(app.clone()).await?;
+            to_value(result)
+        }
+        "check_opencode_cli_version_exists" => {
+            let version: String = from_field(&args, "version")?;
+            let result = crate::opencode_cli::check_opencode_cli_version_exists(version).await?;
             to_value(result)
         }
         "install_opencode_cli" => {
@@ -2321,6 +2442,11 @@ pub async fn dispatch_command(
             let result = crate::gh_cli::get_available_gh_versions(app.clone()).await?;
             to_value(result)
         }
+        "check_gh_cli_version_exists" => {
+            let version: String = from_field(&args, "version")?;
+            let result = crate::gh_cli::check_gh_cli_version_exists(app.clone(), version).await?;
+            to_value(result)
+        }
         "install_gh_cli" => {
             let version: Option<String> = from_field_opt(&args, "version")?;
             crate::gh_cli::install_gh_cli(app.clone(), version).await?;
@@ -2346,6 +2472,13 @@ pub async fn dispatch_command(
         "get_available_coderabbit_versions" => {
             let result =
                 crate::coderabbit_cli::get_available_coderabbit_versions(app.clone()).await?;
+            to_value(result)
+        }
+        "check_coderabbit_cli_version_exists" => {
+            let version: String = from_field(&args, "version")?;
+            let result =
+                crate::coderabbit_cli::check_coderabbit_cli_version_exists(app.clone(), version)
+                    .await?;
             to_value(result)
         }
         "install_coderabbit_cli" => {
@@ -2427,6 +2560,12 @@ pub async fn dispatch_command(
         }
         "get_available_codex_versions" => {
             let result = crate::codex_cli::get_available_codex_versions(app.clone()).await?;
+            to_value(result)
+        }
+        "check_codex_cli_version_exists" => {
+            let version: String = from_field(&args, "version")?;
+            let result =
+                crate::codex_cli::check_codex_cli_version_exists(app.clone(), version).await?;
             to_value(result)
         }
         "get_codex_usage" => {
@@ -2586,6 +2725,23 @@ pub async fn dispatch_command(
             )
             .await?;
             Ok(Value::Null)
+        }
+        "update_queued_message" => {
+            let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;
+            let worktree_path: String = field(&args, "worktreePath", "worktree_path")?;
+            let session_id: String = field(&args, "sessionId", "session_id")?;
+            let message_id: String = field(&args, "messageId", "message_id")?;
+            let message: String = from_field(&args, "message")?;
+            let result = crate::chat::update_queued_message(
+                app.clone(),
+                worktree_id,
+                worktree_path,
+                session_id,
+                message_id,
+                message,
+            )
+            .await?;
+            to_value(result)
         }
         "clear_message_queue" => {
             let worktree_id: String = field(&args, "worktreeId", "worktree_id")?;

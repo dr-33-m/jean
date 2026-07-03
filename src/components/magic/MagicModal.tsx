@@ -3,6 +3,7 @@ import {
   ArrowDownToLine,
   ArrowUpToLine,
   GitCommitHorizontal,
+  GitBranchPlus,
   GitMerge,
   GitPullRequest,
   GitPullRequestArrow,
@@ -58,7 +59,7 @@ import {
 import { usePreferences } from '@/services/preferences'
 import { useAvailableOpencodeModels } from '@/services/opencode-cli'
 import { useAvailableGrokModels } from '@/services/grok-cli'
-import { invoke } from '@/lib/transport'
+import { invoke, listen } from '@/lib/transport'
 import { dismissibleToast } from '@/lib/dismissible-toast'
 import { generateId } from '@/lib/uuid'
 import { openExternal } from '@/lib/platform'
@@ -79,7 +80,8 @@ import type {
   DetectPrResponse,
   MergeConflictsResponse,
   MergePrResponse,
-  ReviewResponse,
+  ReviewJob,
+  StartReviewJobResponse,
 } from '@/types/projects'
 import type { Session } from '@/types/chat'
 import {
@@ -91,7 +93,7 @@ import {
 } from '@/types/preferences'
 import { useRemotePicker } from '@/hooks/useRemotePicker'
 import { useInstalledBackends } from '@/hooks/useInstalledBackends'
-import { chatQueryKeys } from '@/services/chat'
+import { chatQueryKeys, refreshWorktreeSessionsCaches } from '@/services/chat'
 import {
   linkWorktreePr,
   saveWorktreePr,
@@ -105,12 +107,14 @@ import {
   GROK_MODEL_OPTIONS,
 } from '@/components/chat/toolbar/toolbar-options'
 import { formatOpencodeModelLabel } from '@/components/chat/toolbar/toolbar-utils'
+import { BackendLabel } from '@/components/ui/backend-label'
 import { ReviewMethodModal } from '@/components/chat/ReviewMethodModal'
 
 type MagicOption =
   | 'save-context'
   | 'load-context'
   | 'linked-projects'
+  | 'fork-session'
   | 'commit'
   | 'commit-and-push'
   | 'pull'
@@ -231,6 +235,12 @@ function buildMagicColumns(hasOpenPr: boolean): MagicColumns {
           icon: Link2,
           key: 'K',
         },
+        {
+          id: 'fork-session',
+          label: 'Fork Session',
+          icon: GitBranchPlus,
+          key: 'W',
+        },
       ],
     },
     {
@@ -343,6 +353,7 @@ const KEY_TO_OPTION: Record<string, MagicOption> = {
   s: 'save-context',
   l: 'load-context',
   k: 'linked-projects',
+  w: 'fork-session',
   c: 'commit',
   p: 'commit-and-push',
   d: 'pull',
@@ -664,7 +675,7 @@ export function MagicModal() {
       case 'cursor':
         return 'Cursor'
       case 'grok':
-        return 'Grok (Beta)'
+        return 'Grok'
       default:
         return 'Claude'
     }
@@ -1340,8 +1351,7 @@ ${resolveInstructions}`
               (resolvedBackend === 'codex'
                 ? (preferences?.selected_codex_model ?? 'gpt-5.5')
                 : resolvedBackend === 'opencode'
-                  ? (preferences?.selected_opencode_model ??
-                    'opencode/gpt-5.5')
+                  ? (preferences?.selected_opencode_model ?? 'opencode/gpt-5.5')
                   : resolvedBackend === 'cursor'
                     ? (preferences?.selected_cursor_model ?? 'cursor/auto')
                     : (preferences?.selected_model ?? 'sonnet'))
@@ -1528,42 +1538,12 @@ ${resolveInstructions}`
           }
 
           const reviewRunId = generateId()
-          let cancelRequested = false
           const reviewLabel =
             reviewSource === 'coderabbit-cli'
               ? 'CodeRabbit CLI review'
               : 'Review'
           const toastId = toast.loading(
-            `${reviewLabel} for ${reviewTarget}...`,
-            {
-              cancel: {
-                label: 'Cancel',
-                onClick: () => {
-                  cancelRequested = true
-                  toast.loading(`Cancelling review for ${reviewTarget}...`, {
-                    id: toastId,
-                  })
-                  invoke<boolean>('cancel_review_with_ai', { reviewRunId })
-                    .then(cancelled => {
-                      if (cancelled) {
-                        toast.info(`Review cancelled for ${reviewTarget}`, {
-                          id: toastId,
-                        })
-                      } else {
-                        toast.info(
-                          `No active review to cancel for ${reviewTarget}`,
-                          { id: toastId }
-                        )
-                      }
-                    })
-                    .catch(error => {
-                      toast.error(`Failed to cancel review: ${error}`, {
-                        id: toastId,
-                      })
-                    })
-                },
-              },
-            }
+            `Starting ${reviewLabel} for ${reviewTarget}...`
           )
 
           // Fire-and-forget: detect and link PR if not already linked
@@ -1592,116 +1572,140 @@ ${resolveInstructions}`
           }
 
           try {
-            const result = await invoke<ReviewResponse>(
-              reviewSource === 'coderabbit-cli'
-                ? 'run_coderabbit_review'
-                : 'run_review_with_ai',
-              reviewSource === 'coderabbit-cli'
-                ? {
-                    worktreePath: worktree.path,
-                    reviewRunId,
-                    reviewType: 'all',
-                  }
-                : {
-                    worktreePath: worktree.path,
-                    customPrompt: preferences?.magic_prompts?.code_review,
-                    model: preferences?.magic_prompt_models?.code_review_model,
-                    customProfileName: resolveMagicPromptProvider(
-                      preferences?.magic_prompt_providers,
-                      'code_review_provider',
-                      preferences?.default_provider
-                    ),
-                    reasoningEffort:
-                      preferences?.magic_prompt_efforts?.code_review_effort ??
-                      null,
-                    reviewRunId,
-                  }
-            )
-
-            const newSession = await invoke<Session>('create_session', {
-              worktreeId: selectedWorktreeId,
-              worktreePath: worktree.path,
-              name: 'Code Review',
-            })
-
-            const {
-              setReviewResults,
-              setActiveSession,
-              clearActiveWorktree,
-              copySessionSettings,
-              activeSessionIds,
-            } = useChatStore.getState()
-            const currentReviewSessionId = activeSessionIds[selectedWorktreeId]
-            setReviewResults(newSession.id, result)
-
-            // Inherit model/mode/thinking settings from current session
-            if (currentReviewSessionId)
-              copySessionSettings(currentReviewSessionId, newSession.id)
-
-            // Navigate to ProjectCanvasView and auto-open session modal
-            setActiveSession(selectedWorktreeId, newSession.id)
-            useProjectsStore.getState().selectWorktree(selectedWorktreeId)
-            clearActiveWorktree()
-            useUIStore
-              .getState()
-              .markWorktreeForAutoOpenSession(selectedWorktreeId, newSession.id)
-
-            // Persist review results to session file
-            invoke('update_session_state', {
-              worktreeId: selectedWorktreeId,
-              worktreePath: worktree.path,
-              sessionId: newSession.id,
-              reviewResults: result,
-              // eslint-disable-next-line @typescript-eslint/no-empty-function
-            }).catch(() => {})
-
-            queryClient.invalidateQueries({
-              queryKey: chatQueryKeys.sessions(selectedWorktreeId),
-            })
-
-            const findingCount = result.findings.length
-            toast.success(
-              `${reviewSource === 'coderabbit-cli' ? 'CodeRabbit CLI review' : 'Review'} done on ${reviewTarget} (${findingCount} findings)`,
+            const { job } = await invoke<StartReviewJobResponse>(
+              'start_review_job',
               {
-                id: toastId,
-                action: {
-                  label: toastActionLabel('Open'),
-                  onClick: () => {
-                    const { setActiveSession, clearActiveWorktree } =
-                      useChatStore.getState()
-                    useProjectsStore
-                      .getState()
-                      .selectWorktree(selectedWorktreeId)
-                    clearActiveWorktree()
-                    setActiveSession(selectedWorktreeId, newSession.id)
-                    setTimeout(() => {
-                      window.dispatchEvent(
-                        new CustomEvent('open-session-modal', {
-                          detail: {
-                            sessionId: newSession.id,
-                            worktreeId: selectedWorktreeId,
-                            worktreePath: worktree.path,
-                          },
-                        })
-                      )
-                    }, 50)
-                  },
-                },
+                worktreeId: selectedWorktreeId,
+                worktreePath: worktree.path,
+                source: reviewSource,
+                customPrompt: preferences?.magic_prompts?.code_review,
+                model: preferences?.magic_prompt_models?.code_review_model,
+                customProfileName: resolveMagicPromptProvider(
+                  preferences?.magic_prompt_providers,
+                  'code_review_provider',
+                  preferences?.default_provider
+                ),
+                reasoningEffort:
+                  preferences?.magic_prompt_efforts?.code_review_effort ?? null,
+                reviewRunId,
+                reviewType: reviewSource === 'coderabbit-cli' ? 'all' : null,
               }
             )
-          } catch (error) {
-            const errorString = String(error)
-            const cancelled =
-              cancelRequested ||
-              errorString.toLowerCase().includes('cancelled') ||
-              errorString.toLowerCase().includes('canceled')
-            if (cancelled) {
-              toast.info(`Review cancelled for ${reviewTarget}`, {
-                id: toastId,
+
+            if (job.sessionId) {
+              const { setActiveSession, clearActiveWorktree } =
+                useChatStore.getState()
+              setActiveSession(selectedWorktreeId, job.sessionId)
+              useProjectsStore.getState().selectWorktree(selectedWorktreeId)
+              clearActiveWorktree()
+              useUIStore
+                .getState()
+                .markWorktreeForAutoOpenSession(
+                  selectedWorktreeId,
+                  job.sessionId
+                )
+              queryClient.invalidateQueries({
+                queryKey: chatQueryKeys.sessions(selectedWorktreeId),
               })
-            } else {
-              toast.error(`Review failed: ${error}`, { id: toastId })
             }
+
+            toast.loading(`${reviewLabel} running for ${reviewTarget}...`, {
+              id: toastId,
+              cancel: {
+                label: 'Cancel',
+                onClick: () => {
+                  invoke<boolean>('cancel_review_job', { jobId: job.id }).catch(
+                    error => {
+                      toast.error(`Failed to cancel review: ${error}`, {
+                        id: toastId,
+                      })
+                    }
+                  )
+                },
+              },
+            })
+
+            let unlistenReviewJob: (() => void) | null = null
+            let handledTerminalReviewJob = false
+            const handleTerminalReviewJob = (reviewJob: ReviewJob) => {
+              if (reviewJob.id !== job.id) return
+              if (reviewJob.status === 'running') return
+              if (handledTerminalReviewJob) return
+
+              handledTerminalReviewJob = true
+              unlistenReviewJob?.()
+              if (reviewJob.status === 'completed') {
+                const completedSessionId = reviewJob.sessionId
+                void refreshWorktreeSessionsCaches(
+                  queryClient,
+                  selectedWorktreeId,
+                  worktree.path
+                ).finally(() => {
+                  queryClient.invalidateQueries({
+                    queryKey: chatQueryKeys.sessions(selectedWorktreeId),
+                  })
+                  queryClient.invalidateQueries({ queryKey: ['all-sessions'] })
+                })
+                toast.dismiss(toastId)
+                toast.success(
+                  `${reviewLabel} done on ${reviewTarget} (${reviewJob.findingCount ?? 0} findings)`,
+                  {
+                    action: completedSessionId
+                      ? {
+                          label: toastActionLabel('Open'),
+                          onClick: () => {
+                            const { setActiveSession, clearActiveWorktree } =
+                              useChatStore.getState()
+                            useProjectsStore
+                              .getState()
+                              .selectWorktree(selectedWorktreeId)
+                            clearActiveWorktree()
+                            setActiveSession(
+                              selectedWorktreeId,
+                              completedSessionId
+                            )
+                            setTimeout(() => {
+                              window.dispatchEvent(
+                                new CustomEvent('open-session-modal', {
+                                  detail: {
+                                    sessionId: completedSessionId,
+                                    worktreeId: selectedWorktreeId,
+                                    worktreePath: worktree.path,
+                                  },
+                                })
+                              )
+                            }, 50)
+                          },
+                        }
+                      : undefined,
+                  }
+                )
+              } else if (reviewJob.status === 'cancelled') {
+                toast.dismiss(toastId)
+                toast.info(`Review cancelled for ${reviewTarget}`)
+              } else {
+                toast.dismiss(toastId)
+                toast.error(
+                  `Review failed: ${reviewJob.error ?? 'Unknown error'}`
+                )
+              }
+            }
+
+            unlistenReviewJob = await listen<ReviewJob>(
+              'review-job:updated',
+              event => handleTerminalReviewJob(event.payload)
+            )
+            if (handledTerminalReviewJob) {
+              unlistenReviewJob()
+            } else {
+              const currentJob = await invoke<ReviewJob | null>(
+                'get_review_job',
+                { jobId: job.id }
+              ).catch(() => null)
+              if (currentJob) handleTerminalReviewJob(currentJob)
+            }
+          } catch (error) {
+            toast.error(`Failed to start review: ${error}`, { id: toastId })
           } finally {
             clearWorktreeLoading(selectedWorktreeId)
           }
@@ -2424,7 +2428,9 @@ ${resolveInstructions}`
                           <SelectItem value="opencode">OpenCode</SelectItem>
                         )}
                         {installedBackends.includes('grok') && (
-                          <SelectItem value="grok">Grok (Beta)</SelectItem>
+                          <SelectItem value="grok">
+                            <BackendLabel backend="grok" />
+                          </SelectItem>
                         )}
                       </SelectContent>
                     </Select>
@@ -2577,7 +2583,9 @@ ${resolveInstructions}`
                           <SelectItem value="opencode">OpenCode</SelectItem>
                         )}
                         {installedBackends.includes('grok') && (
-                          <SelectItem value="grok">Grok (Beta)</SelectItem>
+                          <SelectItem value="grok">
+                            <BackendLabel backend="grok" />
+                          </SelectItem>
                         )}
                       </SelectContent>
                     </Select>

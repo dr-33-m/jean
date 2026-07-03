@@ -43,7 +43,12 @@ import {
   reconnectNativeCliSession,
   canReconnectSession,
 } from '@/services/chat'
-import { useWorktree, useProjects, useRunScripts } from '@/services/projects'
+import {
+  useWorktree,
+  useProjects,
+  useRunScripts,
+  projectsQueryKeys,
+} from '@/services/projects'
 import { useProjectsStore } from '@/store/projects-store'
 import type {
   Worktree,
@@ -153,7 +158,15 @@ import { usePrStatus, usePrStatusEvents } from '@/services/pr-status'
 import type { PrDisplayStatus, CheckStatus } from '@/types/pr-status'
 import type { QueuedMessage, Session, WorktreeSessions } from '@/types/chat'
 import type { DiffRequest } from '@/types/git-diff'
-import { getEffectiveSessionWaiting } from './session-card-utils'
+import {
+  getEffectiveSessionWaiting,
+  shouldShowCodeReviewLoadingPanel,
+} from './session-card-utils'
+
+interface ForkSessionToWorktreeResponse {
+  worktree: Worktree
+  session: Session
+}
 
 // Lazy-loaded heavy modals (code splitting)
 const GitDiffModal = lazy(() =>
@@ -199,6 +212,7 @@ import { useActiveTodosAndAgents } from './hooks/useActiveTodosAndAgents'
 import { usePendingAttachments } from './hooks/usePendingAttachments'
 import { dedupeInFlightAssistantMessage } from './in-flight-message-dedupe'
 import { shouldShowPermissionApproval } from './permission-approval-utils'
+import { navigateToForkedSession } from './fork-session-navigation'
 
 // PERFORMANCE: Stable empty array references to prevent infinite render loops
 // When Zustand selectors return [], a new reference is created each time
@@ -292,16 +306,6 @@ export function ChatWindow({
   )
   // Review sidebar state
   const reviewSidebarVisible = useChatStore(state => state.reviewSidebarVisible)
-  const hasReviewResults = useChatStore(state =>
-    activeSessionId ? !!state.reviewResults[activeSessionId] : false
-  )
-  const showReviewFullWidth = hasReviewResults && reviewSidebarVisible
-  // Whether session is in review state (used to hide "restored session" indicator after prompt finishes)
-  const isSessionReviewing = useChatStore(state =>
-    activeSessionId
-      ? (state.reviewingSessions[activeSessionId] ?? false)
-      : false
-  )
   // Terminal panel visibility (per-worktree)
   const terminalVisible = useTerminalStore(state => state.terminalVisible)
   const terminalPanelOpen = useTerminalStore(state =>
@@ -339,18 +343,6 @@ export function ChatWindow({
   const handleTerminalExpand = useCallback(() => {
     setTerminalVisible(true)
   }, [setTerminalVisible])
-
-  // Sync review sidebar panel with reviewSidebarVisible state
-  useEffect(() => {
-    const panel = reviewPanelRef.current
-    if (!panel) return
-
-    if (reviewSidebarVisible) {
-      panel.expand()
-    } else {
-      panel.collapse()
-    }
-  }, [reviewSidebarVisible])
 
   // Review sidebar collapse/expand handlers
   const handleReviewSidebarCollapse = useCallback(() => {
@@ -426,6 +418,41 @@ export function ChatWindow({
     activeWorktreePath
   )
 
+  const hasReviewResults = useChatStore(state =>
+    deferredSessionId ? !!state.reviewResults[deferredSessionId] : false
+  )
+  // Whether session is in review state (used to hide "restored session" indicator after prompt finishes)
+  const isSessionReviewing = useChatStore(state =>
+    deferredSessionId
+      ? (state.reviewingSessions[deferredSessionId] ?? false)
+      : false
+  )
+  const isCodeReviewLoadingPanel = shouldShowCodeReviewLoadingPanel({
+    session,
+    isSessionReviewing,
+    hasReviewResults,
+  })
+  const hasReviewPanel = hasReviewResults || isCodeReviewLoadingPanel
+  const showReviewFullWidth = hasReviewPanel && reviewSidebarVisible
+
+  // Sync review sidebar panel with reviewSidebarVisible state
+  useEffect(() => {
+    if (hasReviewPanel && !reviewSidebarVisible) {
+      useChatStore.getState().setReviewSidebarVisible(true)
+    }
+  }, [hasReviewPanel, reviewSidebarVisible])
+
+  useEffect(() => {
+    const panel = reviewPanelRef.current
+    if (!panel) return
+
+    if (reviewSidebarVisible) {
+      panel.expand()
+    } else {
+      panel.collapse()
+    }
+  }, [reviewSidebarVisible])
+
   // Rebuild streamingContentBlocks from snapshot when opening a session whose
   // last message is still running. Covers web-access click-to-open, sidebar
   // navigation, and any other entry that bypasses App.tsx auto-resume.
@@ -459,6 +486,12 @@ export function ChatWindow({
   // the conversation reappears in its terminal surface. The ref guards against
   // a duplicate spawn while the async relaunch is in flight.
   const autoReconnectingRef = useRef<Set<string>>(new Set())
+  const [terminalReconnectError, setTerminalReconnectError] = useState<
+    string | null
+  >(null)
+  useEffect(() => {
+    setTerminalReconnectError(null)
+  }, [deferredSessionId])
   useEffect(() => {
     if (!deferredSessionId || !session || !activeWorktreeId) return
     // `primarySurface`/`sessionTerminalId` are keyed on `activeSessionId`, while
@@ -466,12 +499,15 @@ export function ChatWindow({
     // mismatch could relaunch the previous session's terminal (and yank the user
     // back to it). Wait until the deferred value has caught up to the active one.
     if (isSessionSwitching) return
-    if (primarySurface !== 'terminal' || sessionTerminalId) return
+    const shouldRestoreTerminal =
+      session.primary_surface === 'terminal' || primarySurface === 'terminal'
+    if (!shouldRestoreTerminal || sessionTerminalId) return
     if (!canReconnectSession(session)) return
     if (autoReconnectingRef.current.has(deferredSessionId)) return
 
     const sessionId = deferredSessionId
     autoReconnectingRef.current.add(sessionId)
+    setTerminalReconnectError(null)
     void reconnectNativeCliSession(session, activeWorktreeId, {
       openModal: false,
       showToast: false,
@@ -479,6 +515,9 @@ export function ChatWindow({
     })
       .catch(error => {
         logger.error('Auto-reconnect of terminal session failed', { error })
+        setTerminalReconnectError(
+          error instanceof Error ? error.message : String(error)
+        )
       })
       .finally(() => {
         autoReconnectingRef.current.delete(sessionId)
@@ -613,6 +652,15 @@ export function ChatWindow({
 
   // Run scripts for this worktree (used by CMD+R keybinding)
   const { data: runScripts = [] } = useRunScripts(activeWorktreePath ?? null)
+  const handleRunCommand = useCallback(
+    (command: string) => {
+      if (!activeWorktreeId) return
+      useTerminalStore.getState().startRun(activeWorktreeId, command)
+      useUIStore.getState().setSessionChatModalOpen(true, activeWorktreeId)
+      useTerminalStore.getState().setModalTerminalOpen(activeWorktreeId, true)
+    },
+    [activeWorktreeId]
+  )
 
   // Per-session provider selection: persisted session → zustand → project default → global default
   const projectDefaultProvider = project?.default_provider ?? null
@@ -2078,11 +2126,84 @@ export function ChatWindow({
     useUIStore.getState().setLinkedProjectsModalOpen(open)
   }, [])
 
+  const handleForkSession = useCallback(async () => {
+    if (!activeWorktreeId || !activeSessionId) {
+      toast.error('No active session to fork')
+      return
+    }
+
+    const toastId = toast.loading('Forking session to a new worktree...')
+    try {
+      const result = await invoke<ForkSessionToWorktreeResponse>(
+        'fork_session_to_worktree',
+        {
+          sourceWorktreeId: activeWorktreeId,
+          sourceSessionId: activeSessionId,
+        }
+      )
+
+      const { worktree: forkedWorktree, session: forkedSession } = result
+      queryClient.setQueryData<Worktree>(
+        [...projectsQueryKeys.all, 'worktree', forkedWorktree.id],
+        forkedWorktree
+      )
+      queryClient.setQueryData<Session>(
+        chatQueryKeys.session(forkedSession.id),
+        forkedSession
+      )
+      queryClient.invalidateQueries({ queryKey: projectsQueryKeys.list() })
+      queryClient.invalidateQueries({
+        queryKey: projectsQueryKeys.worktrees(forkedWorktree.project_id),
+      })
+      queryClient.invalidateQueries({
+        queryKey: chatQueryKeys.sessions(forkedWorktree.id),
+      })
+
+      const projectsStore = useProjectsStore.getState()
+      const chatStore = useChatStore.getState()
+      navigateToForkedSession(
+        forkedWorktree,
+        forkedSession,
+        {
+          activeWorktreePath,
+          sessionChatModalOpen: isModal || sessionModalOpen,
+        },
+        {
+          expandProject: projectsStore.expandProject,
+          selectWorktree: projectsStore.selectWorktree,
+          registerWorktreePath: chatStore.registerWorktreePath,
+          setActiveWorktree: chatStore.setActiveWorktree,
+          setActiveSession: chatStore.setActiveSession,
+          addUserInitiatedSession: chatStore.addUserInitiatedSession,
+          openWorktreeModal: (worktreeId, worktreePath) => {
+            window.dispatchEvent(
+              new CustomEvent('open-worktree-modal', {
+                detail: { worktreeId, worktreePath },
+              })
+            )
+          },
+        }
+      )
+
+      toast.success(`Forked session to ${forkedWorktree.name}`, { id: toastId })
+    } catch (err) {
+      toast.error(`Failed to fork session: ${err}`, { id: toastId })
+    }
+  }, [
+    activeSessionId,
+    activeWorktreeId,
+    activeWorktreePath,
+    isModal,
+    queryClient,
+    sessionModalOpen,
+  ])
+
   // Listen for magic-command events from MagicModal
   useMagicCommands({
     handleSaveContext,
     handleLoadContext,
     handleLinkedProjects,
+    handleForkSession,
     handleCommit,
     handleCommitAndPush: handleCommitAndPushWithPicker,
     handlePull: handlePullWithPicker,
@@ -2341,8 +2462,11 @@ export function ChatWindow({
   )
 
   // Queued prompts panel actions (remove / send-now)
-  const { handleRemoveQueuedMessage, handleSendQueuedNow } =
-    useQueuedPromptActions()
+  const {
+    handleRemoveQueuedMessage,
+    handleEditQueuedMessage,
+    handleSendQueuedNow,
+  } = useQueuedPromptActions()
 
   // Pending attachment removal, slash command execution
   const {
@@ -2451,7 +2575,24 @@ export function ChatWindow({
   }
 
   const isTerminalPrimarySurface =
-    primarySurface === 'terminal' && !!activeSessionId && !!sessionTerminalId
+    (primarySurface === 'terminal' ||
+      session?.primary_surface === 'terminal') &&
+    !!activeSessionId &&
+    !!sessionTerminalId
+  const isPersistedTerminalSurface =
+    !isSessionSwitching &&
+    session?.id === activeSessionId &&
+    session?.primary_surface === 'terminal'
+  const isTerminalAwaitingReconnect =
+    isPersistedTerminalSurface && !sessionTerminalId
+  const canReconnectTerminal = session ? canReconnectSession(session) : false
+  const handleChooseNativeSession = () => {
+    useUIStore.getState().openNewSessionModeModal({
+      worktreeId: activeWorktreeId,
+      worktreePath: activeWorktreePath,
+      origin: sessionModalOpen ? 'modal' : 'chat',
+    })
+  }
 
   return (
     <ErrorBoundary
@@ -2499,10 +2640,42 @@ export function ChatWindow({
             sessionId={activeSessionId}
             terminalId={sessionTerminalId}
           />
+        ) : isTerminalAwaitingReconnect ? (
+          <div className="flex min-h-0 flex-1 items-center justify-center p-6">
+            <div className="flex max-w-md flex-col items-center gap-3 text-center">
+              {canReconnectTerminal && !terminalReconnectError ? (
+                <>
+                  <Loader2 className="size-5 animate-spin text-muted-foreground" />
+                  <div className="text-sm font-medium">
+                    Reconnecting terminal session…
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-sm font-medium">
+                    Terminal session needs to be reconnected
+                  </div>
+                  <div className="text-xs leading-5 text-muted-foreground">
+                    {terminalReconnectError ??
+                      'This older session has no saved native CLI resume ID. Choose the matching native session to continue it safely.'}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleChooseNativeSession}
+                  >
+                    Choose native session
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
         ) : showReviewFullWidth && activeSessionId ? (
           <div className="flex-1 min-h-0">
             <ReviewResultsPanel
               sessionId={activeSessionId}
+              isReviewing={isCodeReviewLoadingPanel}
               onSendFix={handleReviewFix}
             />
           </div>
@@ -2975,6 +3148,7 @@ export function ChatWindow({
                                 isSessionBusy={isSending || isWaitingForInput}
                                 onRemove={handleRemoveQueuedMessage}
                                 onSendNow={handleSendQueuedNow}
+                                onEdit={handleEditQueuedMessage}
                               />
                             )}
                           {/* Input area - unified container with textarea and toolbar */}
@@ -3178,6 +3352,7 @@ export function ChatWindow({
                                 worktreeId={activeWorktreeId ?? null}
                                 activeSessionId={activeSessionId}
                                 projectId={worktree?.project_id}
+                                runScripts={runScripts}
                                 loadedIssueContexts={loadedIssueContexts ?? []}
                                 loadedPRContexts={loadedPRContexts ?? []}
                                 loadedSecurityContexts={
@@ -3236,6 +3411,7 @@ export function ChatWindow({
                                 onOpenProjectSettings={
                                   handleOpenProjectSettings
                                 }
+                                onRunCommand={handleRunCommand}
                               />
                             </div>
                           </form>
@@ -3311,7 +3487,7 @@ export function ChatWindow({
             </ResizablePanel>
 
             {/* Review sidebar - shown when active session has review results */}
-            {hasReviewResults && (
+            {hasReviewPanel && (
               <>
                 <ResizableHandle withHandle />
                 <ResizablePanel
@@ -3326,6 +3502,7 @@ export function ChatWindow({
                   {activeSessionId && (
                     <ReviewResultsPanel
                       sessionId={activeSessionId}
+                      isReviewing={isCodeReviewLoadingPanel}
                       onSendFix={handleReviewFix}
                     />
                   )}

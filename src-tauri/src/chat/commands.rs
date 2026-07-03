@@ -668,8 +668,12 @@ pub async fn create_session(
     terminal_command: Option<String>,
     terminal_command_args: Option<Vec<String>>,
     terminal_label: Option<String>,
+    native_session_id: Option<String>,
 ) -> Result<Session, String> {
     log::trace!("Creating new session for worktree: {worktree_id}");
+    if native_session_id.is_some() && primary_surface.as_deref() != Some("terminal") {
+        return Err("Native session IDs are only valid for terminal sessions".to_string());
+    }
 
     let preferences = crate::load_preferences(app.clone()).await.ok();
 
@@ -743,6 +747,9 @@ pub async fn create_session(
         session.terminal_command = terminal_command.clone();
         session.terminal_command_args = terminal_command_args.clone().unwrap_or_default();
         session.terminal_label = terminal_label.clone();
+        if let Some(native_session_id) = native_session_id.as_deref() {
+            persist_salvaged_resume_id(&mut session, &backend_enum, native_session_id);
+        }
         if primary_surface.as_deref() != Some("terminal") {
             session.selected_model = preferences
                 .as_ref()
@@ -1536,6 +1543,12 @@ fn queued_prompt_skips_plan_wait(
     has_plan_wait: bool,
 ) -> bool {
     has_queued_messages && has_plan_wait && !has_question_tool
+}
+
+fn apply_non_waiting_completion_state(session: &mut Session) {
+    session.waiting_for_input = false;
+    session.is_reviewing = false;
+    session.waiting_for_input_type = None;
 }
 
 fn is_unavailable_tool_error(output: Option<&str>) -> bool {
@@ -4307,8 +4320,7 @@ pub async fn send_chat_message(
                             with_sessions_mut(&app, &worktree_path, &worktree_id, |sessions| {
                                 if let Some(session) = sessions.find_session_mut(&session_id) {
                                     persist_salvaged_resume_id(session, &effective_backend, sid);
-                                    session.is_reviewing = true;
-                                    session.waiting_for_input = false;
+                                    apply_non_waiting_completion_state(session);
                                 }
                                 Ok(())
                             })
@@ -4765,9 +4777,7 @@ pub async fn send_chat_message(
                 // A queued prompt is an explicit "continue now"; don't park on
                 // plan approval because the backend queue drain runs right after
                 // this write and should be allowed to dequeue it.
-                session.waiting_for_input = false;
-                session.is_reviewing = true;
-                session.waiting_for_input_type = None;
+                apply_non_waiting_completion_state(session);
             } else if has_blocking_tool {
                 session.waiting_for_input = true;
                 session.is_reviewing = false;
@@ -4786,9 +4796,7 @@ pub async fn send_chat_message(
                 session.waiting_for_input_type = Some("plan".to_string());
             } else {
                 // Normal completion
-                session.waiting_for_input = false;
-                session.is_reviewing = true;
-                session.waiting_for_input_type = None;
+                apply_non_waiting_completion_state(session);
             }
         }
         Ok(())
@@ -5648,7 +5656,11 @@ const MAX_TEXT_SIZE: usize = 10 * 1024 * 1024;
 /// Large text pastes (500+ chars) are saved as files instead of being inlined.
 /// Returns the saved file path for referencing in messages.
 #[tauri::command]
-pub async fn save_pasted_text(app: AppHandle, content: String) -> Result<SaveTextResponse, String> {
+pub async fn save_pasted_text(
+    app: AppHandle,
+    content: String,
+    filename: Option<String>,
+) -> Result<SaveTextResponse, String> {
     let size = content.len();
     log::trace!("Saving pasted text, size: {size} bytes");
 
@@ -5662,10 +5674,7 @@ pub async fn save_pasted_text(app: AppHandle, content: String) -> Result<SaveTex
     // Get the pastes directory (now in app data dir)
     let pastes_dir = get_pastes_dir(&app)?;
 
-    // Generate unique filename
-    let timestamp = now();
-    let short_uuid = &Uuid::new_v4().to_string()[..8];
-    let filename = format!("paste-{timestamp}-{short_uuid}.txt");
+    let filename = pasted_text_filename(filename.as_deref());
     let file_path = pastes_dir.join(&filename);
 
     // Write file atomically (temp file + rename)
@@ -5688,6 +5697,55 @@ pub async fn save_pasted_text(app: AppHandle, content: String) -> Result<SaveTex
         path: path_str,
         size,
     })
+}
+
+fn pasted_text_filename(preferred_name: Option<&str>) -> String {
+    let timestamp = now();
+    let short_uuid = &Uuid::new_v4().to_string()[..8];
+    let base = preferred_name
+        .and_then(|name| name.rsplit(['/', '\\']).next())
+        .unwrap_or("")
+        .trim()
+        .trim_end_matches(".txt")
+        .to_lowercase();
+
+    let mut sanitized = String::new();
+    let mut last_was_dash = false;
+    for ch in base.chars() {
+        if ch.is_ascii_alphanumeric() {
+            sanitized.push(ch);
+            last_was_dash = false;
+        } else if !last_was_dash {
+            sanitized.push('-');
+            last_was_dash = true;
+        }
+        if sanitized.len() >= 80 {
+            break;
+        }
+    }
+
+    let sanitized = sanitized.trim_matches('-');
+    let prefix = if sanitized.is_empty() {
+        "paste"
+    } else {
+        sanitized
+    };
+    format!("{prefix}-{timestamp}-{short_uuid}.txt")
+}
+
+#[cfg(test)]
+mod pasted_text_filename_tests {
+    use super::*;
+
+    #[test]
+    fn save_pasted_text_uses_sanitized_custom_filename() {
+        let filename = pasted_text_filename(Some("DOM: Button Save!"));
+
+        assert!(filename.starts_with("dom-button-save-"));
+        assert!(filename.ends_with(".txt"));
+        assert!(!filename.contains('/'));
+        assert!(!filename.contains(':'));
+    }
 }
 
 /// Update the content of a pasted text file
@@ -6785,6 +6843,7 @@ fn execute_summarization_claude(
 
     let mut cmd = crate::platform::cli_command(&cli_path.to_string_lossy(), None);
     crate::chat::claude::apply_custom_profile_settings(&mut cmd, custom_profile_name);
+    crate::chat::claude::apply_custom_profile_env(&mut cmd, custom_profile_name);
     cmd.args([
         "--print",
         "--input-format",
@@ -8022,6 +8081,51 @@ pub async fn remove_queued_message(
     Ok(())
 }
 
+/// Update a specific queued message's text by its `id` field.
+/// Returns `false` when the message is no longer queued.
+/// Holds the metadata lock across the entire read-modify-write to prevent TOCTOU races.
+#[tauri::command]
+pub async fn update_queued_message(
+    app: AppHandle,
+    _worktree_id: String,
+    _worktree_path: String,
+    session_id: String,
+    message_id: String,
+    message: String,
+) -> Result<bool, String> {
+    let (updated, queue) = with_existing_metadata_mut(&app, &session_id, |metadata| {
+        let Some(idx) = metadata
+            .queued_messages
+            .iter()
+            .position(|m| m.get("id").and_then(|v| v.as_str()) == Some(message_id.as_str()))
+        else {
+            return (false, metadata.queued_messages.clone());
+        };
+
+        if queued_message_supports_any_steering(&metadata.queued_messages[idx]) {
+            return (false, metadata.queued_messages.clone());
+        }
+
+        let queued = &mut metadata.queued_messages[idx];
+        if let Some(obj) = queued.as_object_mut() {
+            obj.insert("message".to_string(), serde_json::Value::String(message));
+            return (true, metadata.queued_messages.clone());
+        }
+
+        (false, metadata.queued_messages.clone())
+    })?;
+
+    if updated {
+        app.emit_all(
+            "queue:updated",
+            &serde_json::json!({ "sessionId": session_id, "queue": queue }),
+        )
+        .ok();
+    }
+
+    Ok(updated)
+}
+
 /// Clear all queued messages for a session.
 /// Holds the metadata lock across the entire read-modify-write to prevent TOCTOU races.
 #[tauri::command]
@@ -8357,6 +8461,12 @@ fn queued_message_is_steerable_for_backend(msg: &serde_json::Value, backend: &st
             .map(|a| a.is_empty())
             .unwrap_or(true)
     })
+}
+
+fn queued_message_supports_any_steering(msg: &serde_json::Value) -> bool {
+    queued_message_is_steerable_for_backend(msg, "codex")
+        || queued_message_is_steerable_for_backend(msg, "opencode")
+        || queued_message_is_steerable_for_backend(msg, "pi")
 }
 
 /// Inject a user message into a running Pi RPC turn via the detached PI host.
@@ -8783,6 +8893,20 @@ mod tests {
         };
 
         assert!(!is_pending_blocking_tool_call(&tool));
+    }
+
+    #[test]
+    fn normal_completion_state_does_not_mark_session_reviewing() {
+        let mut session = Session::new("Normal turn".to_string(), 0, Backend::Claude);
+        session.waiting_for_input = true;
+        session.waiting_for_input_type = Some("plan".to_string());
+        session.is_reviewing = true;
+
+        apply_non_waiting_completion_state(&mut session);
+
+        assert!(!session.waiting_for_input);
+        assert!(session.waiting_for_input_type.is_none());
+        assert!(!session.is_reviewing);
     }
 
     #[test]
@@ -9481,5 +9605,23 @@ my-disabled: /usr/bin/disabled (STDIO) - disabled";
         let remaining = vec![s2, s3];
         let selected = find_neighbor_non_archived_session_id(&remaining, 0);
         assert_eq!(selected.as_deref(), Some("s3"));
+    }
+
+    #[test]
+    fn native_terminal_resume_ids_are_saved_on_the_backend_specific_field() {
+        let mut claude = Session::new("Claude".to_string(), 0, Backend::Claude);
+        persist_salvaged_resume_id(&mut claude, &Backend::Claude, "claude-session");
+        assert_eq!(claude.claude_session_id.as_deref(), Some("claude-session"));
+
+        let mut codex = Session::new("Codex".to_string(), 0, Backend::Codex);
+        persist_salvaged_resume_id(&mut codex, &Backend::Codex, "codex-thread");
+        assert_eq!(codex.codex_thread_id.as_deref(), Some("codex-thread"));
+
+        let mut opencode = Session::new("OpenCode".to_string(), 0, Backend::Opencode);
+        persist_salvaged_resume_id(&mut opencode, &Backend::Opencode, "opencode-session");
+        assert_eq!(
+            opencode.opencode_session_id.as_deref(),
+            Some("opencode-session")
+        );
     }
 }
